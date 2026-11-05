@@ -1,87 +1,5 @@
 namespace RandySDR
 {
-    public class SpectrumAnalyzer
-    {
-        private readonly int _fftSize;
-        private readonly float[] _window;
-        private readonly float[] _magnitude;
-        private System.Numerics.Complex[] _fftBuffer;
-
-        public SpectrumAnalyzer(int fftSize = 2048)
-        {
-            _fftSize = fftSize;
-            _window = new float[fftSize];
-            _magnitude = new float[fftSize / 2];
-            _fftBuffer = new System.Numerics.Complex[fftSize];
-
-            // Create Hamming window
-            for (int i = 0; i < fftSize; i++)
-            {
-                _window[i] = 0.54f - 0.46f * (float)Math.Cos(2.0 * Math.PI * i / (fftSize - 1));
-            }
-        }
-
-        public float[] ProcessIQ(byte[] iqData)
-        {
-            if (iqData.Length < _fftSize * 2)
-                return _magnitude;
-
-            // Convert IQ bytes to complex, apply window
-            for (int i = 0; i < _fftSize; i++)
-            {
-                float I = (iqData[i * 2] - 127.5f) / 127.5f;
-                float Q = (iqData[i * 2 + 1] - 127.5f) / 127.5f;
-                
-                _fftBuffer[i] = new System.Numerics.Complex(I * _window[i], Q * _window[i]);
-            }
-
-            // Simple DFT for lower half (we only need positive frequencies for display)
-            for (int k = 0; k < _fftSize / 2; k++)
-            {
-                System.Numerics.Complex sum = System.Numerics.Complex.Zero;
-                for (int n = 0; n < _fftSize; n++)
-                {
-                    double angle = -2.0 * Math.PI * k * n / _fftSize;
-                    var exp = new System.Numerics.Complex(Math.Cos(angle), Math.Sin(angle));
-                    sum += _fftBuffer[n] * exp;
-                }
-                
-                _magnitude[k] = (float)sum.Magnitude;
-            }
-
-            return _magnitude;
-        }
-
-        public int FindPeakBin()
-        {
-            int peakBin = 0;
-            float peakValue = 0;
-
-            for (int i = 0; i < _magnitude.Length; i++)
-            {
-                if (_magnitude[i] > peakValue)
-                {
-                    peakValue = _magnitude[i];
-                    peakBin = i;
-                }
-            }
-
-            return peakBin;
-        }
-
-        public float GetFrequencyOffset(int sampleRate)
-        {
-            int peakBin = FindPeakBin();
-            
-            // Convert bin to frequency offset
-            // Bin 0 = DC, Bin N/2 = Nyquist
-            float freqPerBin = (float)sampleRate / _fftSize;
-            float offset = (peakBin - _fftSize / 4) * freqPerBin; // Center around 0
-            
-            return offset;
-        }
-    }
-
     public class FrequencyDiagnostics
     {
         public static string DiagnoseFrequencyIssue(float signalLevel, int currentPpm, double currentFreqMhz, double sampleRateMsps)
@@ -106,7 +24,7 @@ namespace RandySDR
                 sb.AppendLine("Use frequency tuning to change stations!\n");
             }
 
-            if (signalLevel < 0.1f)
+            if (signalLevel < 0.04f)
             {
                 sb.AppendLine("❌ VERY WEAK/NO SIGNAL");
                 sb.AppendLine("\nPossible causes:");
@@ -121,7 +39,7 @@ namespace RandySDR
                 sb.AppendLine("• Click 'Scan FM Band'");
                 sb.AppendLine("• Check antenna connection");
             }
-            else if (signalLevel < 0.3f)
+            else if (signalLevel < 0.12f)
             {
                 sb.AppendLine("⚠️ WEAK SIGNAL");
                 sb.AppendLine("\nPossible causes:");

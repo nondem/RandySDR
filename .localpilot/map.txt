@@ -1,0 +1,65 @@
+## WORKSPACE EXECUTIVE SUMMARY (YAML)
+# Generated: 2026-08-10T19:41:28.0500798-04:00
+# Root: D:\00codeLab\RandySDR\RandySDR
+Architecture:
+  Type: Backend (C#/.NET)
+  Scale: 28 relevant source files
+  Components: 0
+  Controllers: 0
+  Models: 0
+  Services: 0
+---
+- File: RandySDR.csproj
+  Preview: "<Project Sdk='Microsoft.NET.Sdk'>  <PropertyGroup>   <OutputType>WinExe</OutputType>   <TargetFramework>net10.0-windows</TargetFramework>   <Nullable>..."
+- File: BEFORE_AFTER_COMPARISON.md
+  Preview: "# Before & After Comparison ## Frequency Input Control Evolution ### BEFORE: Standard NumericUpDown ``` ┌──────────────────────────────────────┐ │ Fre..."
+- File: COMPLETION_SUMMARY.md
+  Preview: "# ✅ IMPLEMENTATION COMPLETE - FrequencySelector for RandySDR ## 🎉 Project Status: PRODUCTION READY --- ## 📊 What Was Delivered ### ✅ Source Code - *..."
+- File: CopySDRSharpDlls.ps1
+  Preview: "# Script to copy RTL-SDR DLLs from SDR# to RandySDR $appDir = 'bin\Debug\net10.0-windows\' Write-Host 'Searching for SDR# installation...' -Foreground..."
+- File: DEMODULATION_TEST.md
+  Preview: "# RandySDR - Quick Demodulation Test Guide ## Problem Symptoms - ❌ Static gets LOUDER when tuning AWAY from station (backwards!) - ❌ Constant ticking ..."
+- File: DOCUMENTATION_INDEX.md
+  Preview: "# 📚 FrequencySelector Documentation Index ## Overview This directory contains comprehensive documentation for the new FrequencySelector control in Ra..."
+- File: FmDemodulator.cs
+  Preview: "using NAudio.Wave; namespace RandySDR {   public enum DemodulationMode   {     WideFm,     NarrowFm,     Am,     Usb,     Lsb,     Raw,     Cw   }   p..."
+- File: Form1.cs
+  Preview: "namespace RandySDR {   public partial class Form1 : Form   {     private RtlSdrWrapper _sdr;     private List<DeviceInfo> _devices = new List<DeviceIn..."
+- File: Form1.Designer.cs
+  Preview: "namespace RandySDR {   partial class Form1   {     /// <summary>     /// Required designer variable.     /// </summary>     private System.ComponentMo..."
+- File: FREQUENCY_SELECTOR_IMPLEMENTATION.md
+  Preview: "# FrequencySelector Control Implementation ## Summary Successfully implemented a custom `FrequencySelector` control to replace the standard `NumericUp..."
+- File: FREQUENCY_SELECTOR_SUMMARY.md
+  Preview: "# RandySDR Frequency Selector - Implementation Complete ✅ ## Summary of Changes Successfully implemented a custom **FrequencySelector** control for th..."
+- File: FREQUENCY_SELECTOR_USER_GUIDE.md
+  Preview: "# FrequencySelector User Guide ## Overview The new FrequencySelector control provides an intuitive interface for selecting FM radio frequencies. Inste..."
+- File: IMPLEMENTATION_CHECKLIST.md
+  Preview: "# FrequencySelector Implementation - Verification Checklist ✅ ## Phase 1: Development ✅ COMPLETE ### File Creation - [x] Created `RandySDR/FrequencySe..."
+- File: IMPLEMENTATION_COMPLETE.md
+  Preview: "# 🎯 RandySDR FrequencySelector - Complete Implementation Summary ## Executive Summary Successfully implemented a **custom FrequencySelector control**..."
+- File: MANIFEST.md
+  Preview: "# 📦 FrequencySelector Implementation - Complete Manifest ## Implementation Date: [Current Date] ## Version: 1.0 ## Status: ✅ PRODUCTION READY --- ## ..."
+- File: NativeRtlSdr.cs
+  Preview: "using System.Runtime.InteropServices; using System.Text; namespace RandySDR {   public class NativeRtlSdr : IDisposable   {     private IntPtr _device..."
+- File: PpmCalibrator.cs
+  Preview: "using System.Diagnostics; namespace RandySDR {   public class PpmCalibrator   {     // Common FM stations with known frequencies for calibration     p..."
+- File: Program.cs
+  Preview: "namespace RandySDR {   internal static class Program   {     /// <summary>     /// The main entry point for the application.     /// </summary>     [S..."
+- File: QUICK_REFERENCE.md
+  Preview: "# 🚀 Quick Reference - FrequencySelector ## What Changed? | Item | Before | After | |------|--------|-------| | **Control Type** | `NumericUpDown` | `..."
+- File: RandySDR.slnx
+  Preview: "<Solution>  <Project Path='RandySDR.csproj' /> </Solution> "
+- File: README.md
+  Preview: "# RandySDR - FM Receiver for RTL-SDR ## Project Overview RandySDR is a Windows Forms application built with .NET 10 that provides FM broadcast recepti..."
+- File: RtlSdrWrapper.cs
+  Preview: "using System.Diagnostics; using System.Runtime.InteropServices; namespace RandySDR {   public class RtlSdrWrapper   {     private NativeRtlSdr? _nativ..."
+- File: RunApp.ps1
+  Preview: "$appDir = 'bin\Debug\net10.0-windows\' Write-Host 'Checking for required DLLs...' -ForegroundColor Yellow $rtlsdr = Test-Path (Join-Path $appDir 'rtls..."
+- File: SpectrumAnalyzer.cs
+  Preview: "namespace RandySDR {   public class SpectrumAnalyzer   {     private readonly int _fftSize;     private readonly float[] _window;     private readonly..."
+- File: TROUBLESHOOTING_AUDIO_FIX.md
+  Preview: "# RandySDR Troubleshooting Checklist - Audio Quality Issues ## Issue: Mostly static, faint audio behind it ### Root Cause (Fixed) ❌ **BROKEN IF BANDPA..."
+- File: .github\copilot-instructions.md
+  Preview: "# Copilot Instructions ## Project Guidelines - For RTL-SDR V4 support, initialization should follow: open device, set sample rate, set center frequenc..."
+- File: RandySDR\FrequencySelector.cs
+  Preview: "using System; using System.ComponentModel; using System.Drawing; using System.Windows.Forms; namespace RandySDR {   public class FrequencySelector : U..."

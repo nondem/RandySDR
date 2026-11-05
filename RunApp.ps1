@@ -1,4 +1,5 @@
-$appDir = "bin\Debug\net10.0-windows\"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$appDir = Join-Path $scriptDir "bin\Debug\net10.0-windows\"
 
 Write-Host "Checking for required DLLs..." -ForegroundColor Yellow
 
@@ -16,5 +17,9 @@ if ($rtlsdr -and $libusb) {
     Start-Process (Join-Path $appDir "RandySDR.exe")
 } else {
     Write-Host "`nMissing DLLs! Please copy them from your SDR# installation." -ForegroundColor Red
-    Write-Host "Copy to: $(Resolve-Path $appDir)" -ForegroundColor Yellow
+    if (Test-Path $appDir) {
+        Write-Host "Copy to: $(Resolve-Path $appDir)" -ForegroundColor Yellow
+    } else {
+        Write-Host "Build the project first. Run: dotnet build" -ForegroundColor Yellow
+    }
 }
