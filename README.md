@@ -2,7 +2,7 @@
 An RTL-SDR receiver for SDR Blog V4 hardware with scanning, spectrum analysis and multiple demod modes. Built on .NET 10 and NAudio.
 
 ## Quick start
-- Clone and open the folder in VS Code, then run `.\RunApp.ps1` to build and launch.
+- Clone and then run `.\RunApp.ps1` to build and launch.
 - Open the RTL‑SDR device, set a frequency and choose Wide FM. Press **Start**. You should hear FM broadcast or an airband station depending on your antenna.
 
 ## Key features
