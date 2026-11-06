@@ -1,3 +1,7 @@
+
+<img width="1701" height="907" alt="image" src="https://github.com/user-attachments/assets/9a690fe0-3fb7-4b64-8415-2b7ef34dcfe2" />
+
+
 # RandySDR
 An RTL-SDR receiver for SDR Blog V4 hardware with scanning, spectrum analysis and multiple demod modes. Built on .NET 10 and NAudio.
 
