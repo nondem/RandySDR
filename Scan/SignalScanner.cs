@@ -14,6 +14,14 @@ namespace RandySDR
         private const double HysteresisDb = 2.0;
         private const double DcOffsetHz = 300_000;
         private const double MinUsableFraction = 0.8;
+        private const double MinAutoDb = 3;
+        private const double MaxAutoDb = 40;
+        private const double AutoSigmas = 5;
+        private const double AutoMinMarginDb = 4;
+        private const double AutoSmoothing = 0.5;
+
+        private double[] _hopThresholdDb = Array.Empty<double>();
+        private double _autoThresholdDb = double.NaN;
 
         private readonly ScanSettings _s;
         private readonly Action<uint> _tune;
@@ -46,6 +54,12 @@ namespace RandySDR
         public double[] Strength { get; private set; } = Array.Empty<double>();
         public IReadOnlyList<double> ChannelHz => _channelHz;
         public double NoiseFloorDb { get; private set; } = double.NaN;
+
+        /// <summary>Threshold in use: the learned automatic value (plus trim) when enabled and available, otherwise the manual one.</summary>
+        public double EffectiveThresholdDb => _s.AutoThreshold && !double.IsNaN(_autoThresholdDb)
+            ? Math.Clamp(_autoThresholdDb + _s.AutoTrimDb, MinAutoDb, MaxAutoDb)
+            : _s.ThresholdDb;
+        public bool AutoActive => _s.AutoThreshold && !double.IsNaN(_autoThresholdDb);
         public double CurrentHz { get; private set; }
         public double LockedStrengthDb { get; private set; }
         public int SweepCount { get; private set; }
@@ -81,6 +95,7 @@ namespace RandySDR
             }
 
             BuildPlan();
+            _hopThresholdDb = Enumerable.Repeat(double.NaN, _hops.Count).ToArray();
             if (_channelHz.Length == 0)
             {
                 error = "No channels in range.";
@@ -107,7 +122,9 @@ namespace RandySDR
             if (_phase != Phase.Locked && _phase != Phase.SettlingLock) return;
             int ch = _lockedChannel;
             double hz = _channelHz[ch];
-            _armed[ch] = false;
+            // Neighbouring grid points on fine rasters see the same carrier; disarm them too.
+            for (int i = 0; i < _channelHz.Length; i++)
+                if (Math.Abs(_channelHz[i] - hz) <= 12_500) _armed[i] = false;
             _lockedChannel = -1;
             SignalReleased?.Invoke(hz);
             BeginHop(); // re-measure the same hop: other channels in it may also be active
@@ -122,6 +139,7 @@ namespace RandySDR
             _armed = Enumerable.Repeat(true, n).ToArray();
             Strength = Enumerable.Repeat(double.NaN, n).ToArray();
             _usedStep = new[] { stepHz };
+            _autoThresholdDb = double.NaN;
 
             double usable = _sampleRate() * MinUsableFraction;
             _hops = new List<Hop>();
@@ -208,18 +226,22 @@ namespace RandySDR
             double stepHz = _usedStep[0];
             double floor = _meas.NoiseFloorDb(Math.Clamp(stepHz, 25_000, 100_000));
             NoiseFloorDb = floor;
+            // Fine grids (e.g. 5 kHz) are narrower than an NFM signal; measure over at least one voice-channel width.
+            double widthHz = Math.Max(stepHz, 12_500);
+            LearnThreshold(floor, widthHz);
+            double threshold = EffectiveThresholdDb;
 
             int best = -1;
             double bestDb = double.NegativeInfinity;
             foreach (int ch in hop.Channels)
             {
-                double db = HopMeasurement.ToDb(_meas.ChannelPower(_channelHz[ch] - hop.CenterHz, stepHz)) - floor;
+                double db = HopMeasurement.ToDb(_meas.ChannelPower(_channelHz[ch] - hop.CenterHz, widthHz)) - floor;
                 Strength[ch] = db;
 
-                if (db < _s.ThresholdDb - HysteresisDb)
+                if (db < threshold - HysteresisDb)
                     _armed[ch] = true;
 
-                if (db >= _s.ThresholdDb && _armed[ch] && !IsLockedOut(_channelHz[ch]) && db > bestDb)
+                if (db >= threshold && _armed[ch] && !IsLockedOut(_channelHz[ch]) && db > bestDb)
                 {
                     best = ch;
                     bestDb = db;
@@ -242,6 +264,21 @@ namespace RandySDR
             BeginHop();
         }
 
+        /// <summary>Updates this hop's automatic threshold (median + max(5 sigma, 4 dB) of the noise blocks) and pools all hops by their median.</summary>
+        private void LearnThreshold(double floorDb, double widthHz)
+        {
+            var (median, sigma, count) = _meas.NoiseSpread(widthHz, floorDb);
+            if (count < 8 || _hopIndex >= _hopThresholdDb.Length) return;
+
+            double t = median + Math.Max(AutoSigmas * sigma, AutoMinMarginDb);
+            double prev = _hopThresholdDb[_hopIndex];
+            _hopThresholdDb[_hopIndex] = double.IsNaN(prev) ? t : prev + AutoSmoothing * (t - prev);
+
+            var known = _hopThresholdDb.Where(v => !double.IsNaN(v)).OrderBy(v => v).ToArray();
+            if (known.Length > 0)
+                _autoThresholdDb = known[known.Length / 2];
+        }
+
         private void Lock(int ch, double db)
         {
             _lockedChannel = ch;
@@ -262,11 +299,11 @@ namespace RandySDR
             double stepHz = _usedStep[0];
             double floor = _meas.NoiseFloorDb(Math.Clamp(stepHz, 25_000, 100_000));
             NoiseFloorDb = floor;
-            double db = HopMeasurement.ToDb(_meas.CentredChannelPower(stepHz)) - floor;
+            double db = HopMeasurement.ToDb(_meas.CentredChannelPower(Math.Max(stepHz, 12_500))) - floor;
             LockedStrengthDb = db;
             Strength[_lockedChannel] = db;
 
-            if (db >= _s.ThresholdDb - HysteresisDb)
+            if (db >= EffectiveThresholdDb - HysteresisDb)
                 _lastPresentMs = now;
 
             bool release = _s.Hold switch

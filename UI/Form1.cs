@@ -20,6 +20,22 @@ namespace RandySDR
             BuildMainLayout();
             BuildScannerPanel();
             ApplyVisualPolish();
+            btnClose.EnabledChanged += (_, _) => UpdateCardStates();
+            btnStop.EnabledChanged += (_, _) => UpdateCardStates();
+            chkSpectrumEnabled.CheckedChanged += (_, _) => UpdateCardStates();
+            _chkAutoThreshold.CheckedChanged += (_, _) => UpdateCardStates();
+            UpdateCardStates();
+        }
+
+        // WS_EX_COMPOSITED double-buffers the whole window tree, which removes child-control flicker.
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x02000000;
+                return cp;
+            }
         }
 
         private int GetSamplingMode()

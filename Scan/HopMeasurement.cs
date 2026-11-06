@@ -89,6 +89,27 @@ namespace RandySDR
             return values[values.Count / 4];
         }
 
+        /// <summary>
+        /// Robust spread of channel-width blocks across the usable band, in dB relative to floorDb:
+        /// the median and a MAD-based sigma, so a few occupied channels do not skew the result.
+        /// </summary>
+        public (double MedianDb, double SigmaDb, int Count) NoiseSpread(double blockHz, double floorDb)
+        {
+            blockHz = Math.Max(blockHz, BinHz * 4);
+            double usable = SampleRate * 0.8;
+            var values = new List<double>();
+            for (double off = -usable / 2 + blockHz / 2; off <= usable / 2 - blockHz / 2; off += blockHz)
+                values.Add(ToDb(ChannelPower(off, blockHz)) - floorDb);
+            if (values.Count < 8)
+                return (0, 0, values.Count);
+
+            values.Sort();
+            double median = values[values.Count / 2];
+            var dev = values.Select(v => Math.Abs(v - median)).OrderBy(v => v).ToList();
+            double sigma = 1.4826 * dev[dev.Count / 2];
+            return (median, sigma, values.Count);
+        }
+
         public static double ToDb(double power) => 10 * Math.Log10(power + 1e-12);
     }
 }

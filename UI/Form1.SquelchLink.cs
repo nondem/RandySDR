@@ -54,7 +54,7 @@ namespace RandySDR
                 return;
             }
 
-            float db = _noiseFloorDb + _trackThreshold.Value + (float)_numSquelchOffset.Value;
+            float db = _noiseFloorDb + (float)EffectiveThresholdDb + (float)_numSquelchOffset.Value;
             db = Math.Clamp(Math.Max(db, _noiseFloorDb + MinAboveFloorDb), FmDemodulator.SquelchMinDb, FmDemodulator.SquelchMaxDb);
             int percent = Math.Clamp(FmDemodulator.DbToSquelchPercent(db), 1, 100);
             if (trackSquelch.Value != percent) trackSquelch.Value = percent;

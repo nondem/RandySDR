@@ -11,16 +11,58 @@ namespace RandySDR
         public static readonly Color BorderColor = Color.FromArgb(52, 60, 78);
         public static readonly Color AccentColor = Color.FromArgb(0, 168, 232);
 
+        // Active cards are lighter with a glowing accent outline; inactive cards sink into the window and their text dims.
+        public static readonly Color ActiveCardColor = Color.FromArgb(34, 42, 58);
+        public static readonly Color InactiveCardColor = Color.FromArgb(20, 22, 29);
+        public static readonly Color ActiveTextColor = Color.FromArgb(240, 244, 250);
+        public static readonly Color InactiveTextColor = Color.FromArgb(112, 118, 132);
+        public static readonly Color ActiveBadgeColor = Color.FromArgb(38, 150, 88);
+        public static readonly Color InactiveBadgeColor = Color.FromArgb(58, 64, 78);
+
+        private bool _active = true;
+        private string? _badgeText;
+        private Color? _badgeColor;
+
         public CardGroupBox()
         {
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                 | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
-            BackColor = CardColor;
+            BackColor = ActiveCardColor;
             Font = new Font("Segoe UI Semibold", 9.5f);
         }
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override Color ForeColor { get => Color.FromArgb(235, 238, 245); set { } }
+        public override Color ForeColor { get => _active ? ActiveTextColor : InactiveTextColor; set { } }
+
+        /// <summary>True when the controls in this card are usable in the current situation.</summary>
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool Active
+        {
+            get => _active;
+            set
+            {
+                if (_active == value) return;
+                _active = value;
+                BackColor = value ? ActiveCardColor : InactiveCardColor;
+                OnForeColorChanged(EventArgs.Empty);
+                Invalidate();
+            }
+        }
+
+        /// <summary>Optional pill text at the right of the header; defaults to ACTIVE / INACTIVE.</summary>
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public string? BadgeText
+        {
+            get => _badgeText;
+            set { if (_badgeText != value) { _badgeText = value; Invalidate(); } }
+        }
+
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public Color? BadgeColor
+        {
+            get => _badgeColor;
+            set { if (_badgeColor != value) { _badgeColor = value; Invalidate(); } }
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -28,18 +70,40 @@ namespace RandySDR
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Parent?.BackColor ?? Color.Black);
 
-            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+            var rect = new Rectangle(1, 1, Width - 3, Height - 3);
             using var path = RoundedRect(rect, 10);
-            using (var fill = new SolidBrush(CardColor)) g.FillPath(fill, path);
-            using (var pen = new Pen(BorderColor)) g.DrawPath(pen, path);
+            using (var fill = new SolidBrush(_active ? ActiveCardColor : InactiveCardColor)) g.FillPath(fill, path);
+            if (_active)
+            {
+                using var glow = new Pen(Color.FromArgb(60, AccentColor), 4f);
+                g.DrawPath(glow, path);
+            }
+            using (var pen = new Pen(_active ? AccentColor : Color.FromArgb(38, 42, 54), _active ? 1.5f : 1f)) g.DrawPath(pen, path);
 
-            // accent bar at the left of the header
-            using (var accent = new SolidBrush(AccentColor)) g.FillRectangle(accent, 10, 4, 4, Font.Height);
-            TextRenderer.DrawText(g, Text, Font, new Point(18, 2), Color.FromArgb(235, 238, 245), TextFormatFlags.NoPadding);
+            Color barColor = _active ? AccentColor : Color.FromArgb(70, 76, 90);
+            using (var bar = new SolidBrush(barColor)) g.FillRectangle(bar, 10, 5, 4, Font.Height);
+            TextRenderer.DrawText(g, Text, Font, new Point(18, 3), _active ? ActiveTextColor : InactiveTextColor, TextFormatFlags.NoPadding);
 
-            int lineY = 6 + Font.Height;
-            using var divider = new Pen(BorderColor);
+            DrawBadge(g);
+
+            int lineY = 7 + Font.Height;
+            using var divider = new Pen(_active ? Color.FromArgb(70, 84, 110) : Color.FromArgb(34, 38, 48));
             g.DrawLine(divider, 12, lineY, Width - 13, lineY);
+        }
+
+        private void DrawBadge(Graphics g)
+        {
+            string text = _badgeText ?? (_active ? "ACTIVE" : "INACTIVE");
+            using var font = new Font("Segoe UI Semibold", 7.5f);
+            var size = TextRenderer.MeasureText(g, text, font, Size.Empty, TextFormatFlags.NoPadding);
+            var pill = new Rectangle(Width - 16 - size.Width - 16, 4, size.Width + 16, Font.Height);
+            if (pill.Left < 120) return;
+
+            Color fill = _badgeColor ?? (_active ? ActiveBadgeColor : InactiveBadgeColor);
+            using var path = RoundedRect(pill, pill.Height / 2);
+            using (var b = new SolidBrush(fill)) g.FillPath(b, path);
+            TextRenderer.DrawText(g, text, font, pill, _active ? Color.White : Color.FromArgb(150, 156, 170),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
         private static GraphicsPath RoundedRect(Rectangle r, int radius)

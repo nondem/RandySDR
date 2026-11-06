@@ -29,6 +29,10 @@ namespace RandySDR
         public ScanMethod Method { get; set; } = ScanMethod.WidebandFft;
         /// <summary>A channel counts as a signal when it is this many dB above the measured noise floor.</summary>
         public int ThresholdDb { get; set; } = 10;
+        /// <summary>When true the scanner derives the threshold from the measured noise spread; ThresholdDb is then only the starting value.</summary>
+        public bool AutoThreshold { get; set; } = true;
+        /// <summary>Added to the automatic threshold (negative = more sensitive).</summary>
+        public int AutoTrimDb { get; set; } = 0;
         /// <summary>Time to wait after retuning before measuring (USB buffers hold old-frequency data).</summary>
         public int SettleMs { get; set; } = 120;
         public HoldMode Hold { get; set; } = HoldMode.UntilSignalDrops;
