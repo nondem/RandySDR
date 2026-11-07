@@ -42,11 +42,52 @@ namespace RandySDR
             set
             {
                 if (_active == value) return;
+                bool wasCollapsed = Collapsed;
                 _active = value;
                 BackColor = value ? ActiveCardColor : InactiveCardColor;
                 OnForeColorChanged(EventArgs.Empty);
                 Invalidate();
             }
+        }
+
+        private bool _userCollapsed;
+
+        /// <summary>Raised when the card folds to, or unfolds from, its header strip.</summary>
+        public event EventHandler? CollapsedChanged;
+
+        /// <summary>Any card can fold to its header, active or not; the user's choice persists across state changes.</summary>
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool Collapsed => _userCollapsed;
+
+        [Browsable(false)]
+        public int HeaderHeight => Font.Height + 14;
+
+        private void ApplyCollapse()
+        {
+            foreach (Control c in Controls) c.Visible = !Collapsed;
+            Invalidate();
+            CollapsedChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>Sets the fold state programmatically (used by expand/collapse-all).</summary>
+        public void SetCollapsed(bool value)
+        {
+            if (_userCollapsed == value) return;
+            _userCollapsed = value;
+            ApplyCollapse();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left || e.Y > HeaderHeight) return;
+            SetCollapsed(!_userCollapsed);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            Cursor = e.Y <= HeaderHeight ? Cursors.Hand : Cursors.Default;
         }
 
         /// <summary>Optional pill text at the right of the header; defaults to ACTIVE / INACTIVE.</summary>
@@ -82,7 +123,17 @@ namespace RandySDR
 
             Color barColor = _active ? AccentColor : Color.FromArgb(70, 76, 90);
             using (var bar = new SolidBrush(barColor)) g.FillRectangle(bar, 10, 5, 4, Font.Height);
-            TextRenderer.DrawText(g, Text, Font, new Point(18, 3), _active ? ActiveTextColor : InactiveTextColor, TextFormatFlags.NoPadding);
+            int textX = 18;
+            {
+                // fold chevron: right-pointing when collapsed, down-pointing when open
+                int cy = 5 + Font.Height / 2;
+                var tri = Collapsed
+                    ? new[] { new Point(20, cy - 5), new Point(20, cy + 5), new Point(27, cy) }
+                    : new[] { new Point(19, cy - 3), new Point(29, cy - 3), new Point(24, cy + 4) };
+                using (var tb = new SolidBrush(_active ? AccentColor : InactiveTextColor)) g.FillPolygon(tb, tri);
+                textX = 36;
+            }
+            TextRenderer.DrawText(g, Text, Font, new Point(textX, 3), _active ? ActiveTextColor : InactiveTextColor, TextFormatFlags.NoPadding);
 
             DrawBadge(g);
 

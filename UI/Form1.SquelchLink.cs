@@ -17,7 +17,7 @@ namespace RandySDR
 
         private void BuildSquelchLinkControls()
         {
-            _chkLinkSquelch = new CheckBox { Text = "Link squelch to detection threshold", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
+            _chkLinkSquelch = new CheckBox { Text = "Link squelch to detection threshold", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
             _numSquelchOffset = NewNumeric(0, -6m, 15m, 1m);
             var tip = new ToolTip();
             tip.SetToolTip(_chkLinkSquelch, "Squelch follows the scan threshold: noise floor + threshold + offset. Run a scan once so the noise floor is learned.");

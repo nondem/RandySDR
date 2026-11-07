@@ -38,7 +38,7 @@ namespace RandySDR
 
         private void BuildScannerPanel()
         {
-            _scanStack = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 0, MinimumSize = new Size(560, 0) };
+            _scanStack = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 0, MinimumSize = new Size(560, 0) };
             _scanStack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             _rightPanel.Controls.Add(_scanStack);
 
@@ -49,18 +49,18 @@ namespace RandySDR
             _numStep = NewNumeric(2, 1m, 5000m, 5m);
             _cmbMethod = NewCombo(new[] { "Wideband FFT (fast)", "Tune each channel (slow)" });
             _cmbHold = NewCombo(new[] { "Stay until signal drops", "Stay until I press Resume", "Stay for fixed time" });
-            _lblThreshold = new Label { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
-            _chkAutoThreshold = new CheckBox { Text = "Auto-detect threshold", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
+            _lblThreshold = new Label { AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
+            _chkAutoThreshold = new CheckBox { Text = "Auto-detect threshold", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
             _numAutoTrim = NewNumeric(0, -10m, 15m, 1m);
             var thresholdTip = new ToolTip();
             thresholdTip.SetToolTip(_chkAutoThreshold, "Learns the threshold from the measured noise while scanning. Uncheck to set it manually with the slider.");
             thresholdTip.SetToolTip(_numAutoTrim, "Nudges the automatic threshold. Negative = more sensitive, positive = fewer false detections.");
-            _trackThreshold = new TrackBar { Dock = DockStyle.Fill, Minimum = 3, Maximum = 40, TickFrequency = 3, Margin = new Padding(0, 0, 0, 6) };
+            _trackThreshold = new TrackBar { Dock = DockStyle.Fill, AutoSize = false, Height = 32, Minimum = 3, Maximum = 40, TickFrequency = 3, Margin = new Padding(0, 0, 0, 0) };
             _numHold = NewNumeric(1, 0.5m, 120m, 0.5m);
             _numSettle = NewNumeric(0, 40m, 1000m, 10m);
-            _chkAutoMode = new CheckBox { Text = "Auto-select mode by band", AutoSize = true, Margin = new Padding(0, 0, 0, 6) };
-            _chkLog = new CheckBox { Text = "Log detections", AutoSize = true };
-            var checks = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
+            _chkAutoMode = new CheckBox { Text = "Auto-select mode by band", AutoSize = true, Margin = new Padding(0, 2, 16, 2) };
+            _chkLog = new CheckBox { Text = "Log detections", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
+            var checks = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = true, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 0) };
             checks.Controls.Add(_chkAutoMode);
             checks.Controls.Add(_chkLog);
 
@@ -70,7 +70,7 @@ namespace RandySDR
             _lblScanStatus = new Label
             {
                 Text = "Idle", ForeColor = Color.Silver, Dock = DockStyle.Fill, AutoSize = false,
-                Font = new Font("Segoe UI Semibold", 12f), TextAlign = ContentAlignment.MiddleLeft, MinimumSize = new Size(0, 60)
+                Font = new Font("Segoe UI Semibold", 12f), TextAlign = ContentAlignment.MiddleLeft, MinimumSize = new Size(0, 36)
             };
             _scanGraph = new ScanGraph { Dock = DockStyle.Fill, Margin = new Padding(0, 6, 0, 6), MinimumSize = new Size(300, 260) };
 
@@ -88,22 +88,24 @@ namespace RandySDR
 
             // Each logical group is its own card so it can show an active / inactive state independently.
             _cardRange = AddScanCard("Scan Range", Stack(
-                FieldRow(("Band preset", _cmbPreset)),
-                FieldRow(("Start (MHz)", _numStart), ("Stop (MHz)", _numStop), ("Step (kHz)", _numStep)),
-                FieldRow(("Scan method", _cmbMethod))));
+                FieldRow(("Band preset", _cmbPreset), ("Scan method", _cmbMethod)),
+                FieldRow(("Start (MHz)", _numStart), ("Stop (MHz)", _numStop), ("Step (kHz)", _numStep))));
             _cardDetect = AddScanCard("Detection", Stack(
-                FieldRow((null, _chkAutoThreshold), ("Auto trim (dB)", _numAutoTrim)),
+                OptionRow(_chkAutoThreshold, "Auto trim (dB)", _numAutoTrim),
                 FieldRow((_lblThreshold, _trackThreshold)),
-                FieldRow((null, _chkLinkSquelch), ("Squelch offset (dB)", _numSquelchOffset))));
+                OptionRow(_chkLinkSquelch, "Squelch offset (dB)", _numSquelchOffset)));
             _cardBehave = AddScanCard("Behaviour", Stack(
-                FieldRow(("When a signal is found", _cmbHold), ("Hold / drop time (s)", _numHold)),
-                FieldRow(("Settle time (ms)", _numSettle), (null, checks))));
+                FieldRow(("When a signal is found", _cmbHold), ("Hold / drop time (s)", _numHold), ("Settle time (ms)", _numSettle)),
+                checks));
             _cardControl = AddScanCard("Scan Control", Stack(ButtonRow(_btnScanToggle, _btnResume, _btnLockout), _lblScanStatus));
-            _cardGraph = AddScanCard("Activity Graph", _scanGraph, 340);
-            _cardLog = AddScanCard("Detection Log", ListSection(null, _lstLog, btnClearLog, btnSaveLog), 340);
-            _cardLock = AddScanCard("Locked-out Frequencies", ListSection("Skipped by the scanner", _lstLockouts, btnRemoveLockout, btnClearLockouts), 300);
+            _cardGraph = AddScanCard("Activity Graph", _scanGraph, 50);
+            _cardLog = AddScanCard("Detection Log", ListSection(null, _lstLog, btnClearLog, btnSaveLog), 25);
+            _cardLock = AddScanCard("Locked-out Frequencies", ListSection("Skipped by the scanner", _lstLockouts, btnRemoveLockout, btnClearLockouts), 25);
+            HookCardCollapse(groupBox1, groupBox2, groupBox3, groupBox4, groupBoxAudio, groupBox6,
+                _cardRange, _cardDetect, _cardBehave, _cardControl, _cardGraph, _cardLog, _cardLock);
 
             LoadScanSettingsToUi();
+            UpdateScannerMinimumHeight();
 
             _cmbPreset.SelectedIndexChanged += PresetChanged;
             foreach (var n in new[] { _numStart, _numStop, _numStep, _numHold, _numSettle })
@@ -132,21 +134,53 @@ namespace RandySDR
         private CardGroupBox _cardRange = null!, _cardDetect = null!, _cardBehave = null!, _cardControl = null!,
             _cardGraph = null!, _cardLog = null!, _cardLock = null!;
 
-        /// <summary>Adds a card to the scanner stack. fixedHeight 0 = size to content.</summary>
-        private CardGroupBox AddScanCard(string title, Control content, int fixedHeight = 0)
+        private void UpdateScannerMinimumHeight()
+        {
+            int fixedHeight = 0;
+            int minimumWidth = 560;
+            foreach (var card in _autoCards)
+                if (!card.Collapsed)
+                    minimumWidth = Math.Max(minimumWidth, card.GetPreferredSize(Size.Empty).Width + card.Margin.Horizontal);
+            float percentTotal = 0, requiredPercentHeight = 0;
+            foreach (Control control in _scanStack.Controls)
+            {
+                if (control is not CardGroupBox card) continue;
+                var style = _scanStack.RowStyles[_scanStack.GetRow(card)];
+                if (style.SizeType == SizeType.Percent)
+                {
+                    int minimum = card == _cardGraph ? _scanGraph.MinimumSize.Height + card.HeaderHeight + card.Padding.Bottom
+                        : card == _cardLock ? 155 : 135;
+                    percentTotal += style.Height;
+                    requiredPercentHeight = Math.Max(requiredPercentHeight, (minimum + card.Margin.Vertical) / style.Height);
+                }
+                else if (style.SizeType == SizeType.Absolute)
+                    fixedHeight += (int)Math.Ceiling(style.Height);
+                else
+                    fixedHeight += card.GetPreferredSize(new Size(Math.Max(minimumWidth, _scanStack.ClientSize.Width), 0)).Height + card.Margin.Vertical;
+            }
+            int minimumHeight = fixedHeight + (int)Math.Ceiling(percentTotal * requiredPercentHeight);
+            _scanStack.MinimumSize = new Size(minimumWidth, minimumHeight);
+        }
+
+        /// <summary>Adds a card to the scanner stack. weight 0 = size to content, otherwise a share of the leftover height.</summary>
+        private CardGroupBox AddScanCard(string title, Control content, float weight = 0)
         {
             var card = new CardGroupBox
             {
                 Text = title,
                 Dock = DockStyle.Fill,
-                Padding = new Padding(14, 10, 14, 14),
-                Margin = new Padding(0, 0, 0, 12)
+                Padding = new Padding(12, 8, 12, 10),
+                Margin = new Padding(0, 0, 0, 6)
             };
             content.Dock = DockStyle.Fill;
             card.Controls.Add(content);
-            if (fixedHeight > 0) card.Height = fixedHeight;
-            else { card.AutoSize = true; card.AutoSizeMode = AutoSizeMode.GrowAndShrink; }
-            _scanStack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            if (weight <= 0)
+            {
+                card.AutoSize = true;
+                card.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                _autoCards.Add(card);
+            }
+            _scanStack.RowStyles.Add(weight > 0 ? new RowStyle(SizeType.Percent, weight) : new RowStyle(SizeType.AutoSize));
             _scanStack.Controls.Add(card, 0, _scanStack.RowCount++);
             return card;
         }
@@ -154,7 +188,7 @@ namespace RandySDR
         /// <summary>Vertical stack of rows that sizes to its content.</summary>
         private static TableLayoutPanel Stack(params Control[] rows)
         {
-            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, RowCount = rows.Length };
+            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, RowCount = rows.Length, Margin = Padding.Empty };
             t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             foreach (var r in rows)
             {
@@ -176,12 +210,12 @@ namespace RandySDR
             new() { Dock = DockStyle.Fill, DecimalPlaces = decimals, Minimum = min, Maximum = max, Increment = inc, Margin = new Padding(0, 0, 10, 0) };
 
         private static Button NewButton(string text) =>
-            new() { Text = text, Dock = DockStyle.Fill, MinimumSize = new Size(0, 44), Margin = new Padding(0, 4, 10, 4) };
+            new() { Text = text, Dock = DockStyle.Fill, MinimumSize = new Size(0, 36), Margin = new Padding(0, 2, 8, 2) };
 
         /// <summary>One row of equally wide columns, each a caption above its control.</summary>
         private static TableLayoutPanel FieldRow(params (object? Caption, Control Control)[] fields)
         {
-            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = fields.Length, RowCount = 2, Margin = new Padding(0, 0, 0, 8) };
+            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = fields.Length, RowCount = 2, Margin = new Padding(0, 0, 0, 4) };
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             for (int i = 0; i < fields.Length; i++)
@@ -190,7 +224,7 @@ namespace RandySDR
                 var caption = fields[i].Caption switch
                 {
                     Label l => l,
-                    string s => new Label { Text = s, AutoSize = true, Margin = new Padding(0, 6, 0, 2) },
+                    string s => new Label { Text = s, AutoSize = true, Margin = new Padding(0, 2, 0, 2) },
                     _ => null
                 };
                 if (caption != null) t.Controls.Add(caption, i, 0);
@@ -200,9 +234,27 @@ namespace RandySDR
             return t;
         }
 
+        private static TableLayoutPanel OptionRow(CheckBox option, string caption, NumericUpDown value)
+        {
+            var row = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 2, 0, 4) };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+            option.Anchor = AnchorStyles.Left;
+            option.Dock = DockStyle.None;
+            var label = new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) };
+            value.Margin = Padding.Empty;
+            value.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            value.Dock = DockStyle.None;
+            row.Controls.Add(option, 0, 0);
+            row.Controls.Add(label, 1, 0);
+            row.Controls.Add(value, 2, 0);
+            return row;
+        }
+
         private static TableLayoutPanel ButtonRow(params Button[] buttons)
         {
-            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = buttons.Length, RowCount = 1, Margin = new Padding(0, 4, 0, 4) };
+            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = buttons.Length, RowCount = 1, Margin = new Padding(0, 2, 0, 2) };
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             for (int i = 0; i < buttons.Length; i++)
             {
@@ -286,7 +338,7 @@ namespace RandySDR
                 : learned
                     ? $"Detection threshold: AUTO {eff:F1} dB (learned from the noise)"
                     : $"Detection threshold: AUTO (learning when the scan starts; {_trackThreshold.Value} dB until then)";
-            _scanGraph.ThresholdDb = (int)Math.Round(eff);
+            _scanGraph.ThresholdDb = eff;
             ApplyLinkedSquelch();
         }
 
@@ -433,7 +485,7 @@ namespace RandySDR
             {
                 _lblScanStatus.Text = "Idle - press Start scan";
                 _lblScanStatus.ForeColor = Color.FromArgb(150, 156, 170);
-                if (sc != null) _scanGraph.SetData(sc.Strength, _scanSettings.StartMHz, _scanSettings.StopMHz, -1);
+                if (sc != null) _scanGraph.SetData(sc.Strength, sc.ChannelHz, -1, false);
                 return;
             }
 
@@ -441,7 +493,7 @@ namespace RandySDR
             if (state == ScanState.Locked)
                 marker = (int)Math.Round((sc.LockedHz - _scanSettings.StartMHz * 1e6) / (_scanSettings.StepKHz * 1000));
 
-            _scanGraph.SetData(sc.Strength, _scanSettings.StartMHz, _scanSettings.StopMHz, marker);
+            _scanGraph.SetData(sc.Strength, sc.ChannelHz, marker, true);
             _lblScanStatus.Text = state == ScanState.Locked
                 ? $"LOCKED {sc.LockedHz / 1e6:0.0000} MHz  signal +{sc.LockedStrengthDb:F1} dB  (floor {sc.NoiseFloorDb:F1} dBFS)"
                 : $"Scanning {sc.CurrentHz / 1e6:F3} MHz   floor {sc.NoiseFloorDb:F1} dBFS   sweeps: {sc.SweepCount}";
@@ -489,10 +541,9 @@ namespace RandySDR
             bool hasLock = _lstLockouts.Items.Count > 0;
             Set(_cardLock, usable || hasLock, hasLock ? $"{_lstLockouts.Items.Count} SKIPPED" : null);
 
-            _cardRange.Enabled = usable;
-            _cardDetect.Enabled = usable;
-            _cardBehave.Enabled = usable;
-            _cardControl.Enabled = usable;
+            _cardRange.Enabled = true;
+            foreach (var c in new[] { _cardRange, _cardDetect, _cardBehave, _cardControl })
+                foreach (Control child in c.Controls) child.Enabled = c.Active;
         }
 
         private void LockOutCurrent()

@@ -3,170 +3,283 @@ using System.Drawing.Drawing2D;
 
 namespace RandySDR
 {
-    /// <summary>
-    /// Scanner overview: one bar per channel (dB above the noise floor) on a dark plot with dB gridlines,
-    /// a MHz axis, a dashed threshold line, labels on detections and a highlighted locked channel.
-    /// </summary>
+    /// <summary>Latest measured signal strength per scanner channel, relative to the measured noise floor.</summary>
     public class ScanGraph : Control
     {
-        private static readonly Color Back = Color.FromArgb(10, 12, 18);
-        private static readonly Color GridColor = Color.FromArgb(38, 46, 60);
-        private static readonly Color TextColor = Color.FromArgb(170, 180, 195);
-
+        private static readonly Color Background = Color.FromArgb(10, 12, 18);
+        private static readonly Color Grid = Color.FromArgb(42, 52, 67);
+        private static readonly Color TextColor = Color.FromArgb(185, 198, 214);
+        private static readonly Color Measured = Color.FromArgb(48, 198, 151);
+        private static readonly Color AboveThreshold = Color.FromArgb(255, 190, 64);
+        private static readonly Color Locked = Color.FromArgb(75, 193, 255);
+        private readonly ToolTip _tip = new() { InitialDelay = 300, ReshowDelay = 100 };
         private double[] _strength = Array.Empty<double>();
-        private double _startMHz, _stopMHz;
-        private int _thresholdDb = 10;
+        private IReadOnlyList<double> _channelHz = Array.Empty<double>();
+        private double _thresholdDb = 10;
         private int _markerIndex = -1;
+        private bool _running;
+        private double _axisMin = 0, _axisMax = 30;
+        private long _lastRangeExpansion;
+        private int _hoverColumn = -1;
 
         public ScanGraph()
         {
-            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = Back;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = Background;
             ForeColor = TextColor;
             Font = new Font("Segoe UI", 9f);
         }
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public int ThresholdDb
+        public double ThresholdDb
         {
             get => _thresholdDb;
-            set { _thresholdDb = value; Invalidate(); }
+            set
+            {
+                if (!double.IsFinite(value))
+                    throw new ArgumentOutOfRangeException(nameof(value), "Threshold must be finite.");
+                if (_thresholdDb == value) return;
+                _thresholdDb = value;
+                UpdateRange();
+                Invalidate();
+            }
         }
 
-        public void SetData(double[] strength, double startMHz, double stopMHz, int markerIndex)
+        public void SetData(double[] strength, IReadOnlyList<double> channelHz, int markerIndex, bool running)
         {
+            ArgumentNullException.ThrowIfNull(strength);
+            ArgumentNullException.ThrowIfNull(channelHz);
+            if (strength.Length != channelHz.Count)
+                throw new ArgumentException("Each strength measurement must have a channel frequency.", nameof(channelHz));
+
+            bool newPlan = !ReferenceEquals(_channelHz, channelHz);
             _strength = strength;
-            _startMHz = startMHz;
-            _stopMHz = stopMHz;
+            _channelHz = channelHz;
             _markerIndex = markerIndex;
+            _running = running;
+            UpdateRange(newPlan);
+            if (newPlan) ClearTip();
             Invalidate();
+        }
+
+        private void UpdateRange(bool reset = false)
+        {
+            double min = Math.Min(0, _thresholdDb), max = Math.Max(0, _thresholdDb);
+            foreach (double value in _strength)
+            {
+                if (!double.IsFinite(value)) continue;
+                min = Math.Min(min, value);
+                max = Math.Max(max, value);
+            }
+
+            double padding = Math.Max(2, (max - min) * 0.1);
+            double step = NiceStep(Math.Max(10, max - min + 2 * padding) / 5);
+            double desiredMin = Math.Floor(Math.Min(0, min - (min < 0 ? padding : 0)) / step) * step;
+            double desiredMax = Math.Ceiling((max + padding) / step) * step;
+            long now = Environment.TickCount64;
+            if (reset || desiredMin < _axisMin || desiredMax > _axisMax)
+            {
+                _axisMin = reset ? desiredMin : Math.Min(_axisMin, desiredMin);
+                _axisMax = reset ? desiredMax : Math.Max(_axisMax, desiredMax);
+                _lastRangeExpansion = now;
+            }
+            else if (now - _lastRangeExpansion >= 8000 &&
+                (desiredMin > _axisMin || desiredMax < _axisMax))
+            {
+                _axisMin = desiredMin;
+                _axisMax = desiredMax;
+                _lastRangeExpansion = now;
+            }
+        }
+
+        private Rectangle PlotRectangle()
+        {
+            int fh = Font.Height;
+            return new Rectangle(Math.Max(54, fh * 4), fh * 3 + 8,
+                Width - Math.Max(54, fh * 4) - 18, Height - fh * 5 - 16);
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            var g = e.Graphics;
-            g.Clear(Back);
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            g.Clear(Background);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            Rectangle plot = PlotRectangle();
+            if (plot.Width < 40 || plot.Height < Math.Max(30, Font.Height + 4)) return;
 
-            float fh = Font.GetHeight(g);
-            int left = (int)(fh * 3.2f), top = (int)(fh * 1.6f);
-            var plot = new Rectangle(left, top, Width - left - (int)(fh * 2.2f), Height - top - (int)(fh * 2.2f));
-            if (plot.Width < 40 || plot.Height < 30) return;
+            int count = 0, above = 0, peakIndex = -1;
+            double peak = double.NegativeInfinity;
+            for (int i = 0; i < _strength.Length; i++)
+            {
+                double value = _strength[i];
+                if (!double.IsFinite(value)) continue;
+                count++;
+                if (value >= _thresholdDb) above++;
+                if (value > peak) { peak = value; peakIndex = i; }
+            }
 
-            double observed = 0;
-            foreach (double v in _strength)
-                if (!double.IsNaN(v) && v > observed) observed = v;
-            double maxDb = Math.Clamp(Math.Ceiling(Math.Max(observed + 3, _thresholdDb + 8) / 10) * 10, 30, 90);
+            string summary = count == 0 ? "Waiting for channel measurements"
+                : $"{(_running ? "Latest readings" : "Last scan")}  |  {count:N0}/{_strength.Length:N0} measured  |  {above:N0} above threshold  |  Peak {FormatMHz(_channelHz[peakIndex])} MHz ({peak:+0.0;-0.0;0.0} dB)";
+            TextRenderer.DrawText(g, summary, Font, new Rectangle(4, 1, Width - 8, Font.Height + 2), TextColor,
+                TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
 
-            using var gridPen = new Pen(GridColor);
+            DrawLegend(g);
+            using var plotBrush = new SolidBrush(Color.FromArgb(15, 20, 30));
+            using var gridPen = new Pen(Grid);
             using var textBrush = new SolidBrush(TextColor);
-            using var plotBack = new SolidBrush(Color.FromArgb(14, 18, 27));
-            g.FillRectangle(plotBack, plot);
+            g.FillRectangle(plotBrush, plot);
+            int YOf(double db) => plot.Bottom - (int)Math.Round((db - _axisMin) / (_axisMax - _axisMin) * plot.Height);
 
-            int YOf(double db) => plot.Bottom - (int)(Math.Clamp(db, 0, maxDb) / maxDb * plot.Height);
-
-            using var rightFmt = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center };
-            for (double db = 0; db <= maxDb; db += 10)
+            double dbStep = NiceStep((_axisMax - _axisMin) / Math.Max(2, plot.Height / (Font.Height * 2.5)));
+            using var right = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center };
+            for (double db = Math.Ceiling(_axisMin / dbStep) * dbStep; db <= _axisMax + dbStep * 0.001; db += dbStep)
             {
                 int y = YOf(db);
                 g.DrawLine(gridPen, plot.Left, y, plot.Right, y);
-                g.DrawString($"{db:0}", Font, textBrush, new RectangleF(0, y - fh, plot.Left - 6, fh * 2), rightFmt);
+                g.DrawString(db.ToString("0.#"), Font, textBrush, new RectangleF(0, y - Font.Height, plot.Left - 6, Font.Height * 2), right);
             }
-            g.DrawString("dB", Font, textBrush, 2, 0);
+            TextRenderer.DrawText(g, "dB above noise", Font, new Point(plot.Left, plot.Top - Font.Height - 1), TextColor,
+                TextFormatFlags.NoPadding);
 
-            double span = _stopMHz - _startMHz;
-            int n = _strength.Length;
-            double chStep = n > 1 ? span / (n - 1) : 0.1;
-            double axisStart = _startMHz - chStep / 2, axisSpan = span + chStep;
-            float XOf(double mhz) => plot.Left + (float)((mhz - axisStart) / axisSpan * plot.Width);
-
-            if (axisSpan > 0 && n > 0)
+            if (_channelHz.Count > 0)
             {
-                double tick = NiceStep(axisSpan / Math.Max(3, plot.Width / (fh * 8)));
-                using var centerFmt = new StringFormat { Alignment = StringAlignment.Center };
-                for (double f = Math.Ceiling(axisStart / tick) * tick; f <= axisStart + axisSpan; f += tick)
+                double stepHz = _channelHz.Count > 1 ? _channelHz[1] - _channelHz[0] : 1000;
+                double axisStart = _channelHz[0] - stepHz / 2;
+                double axisEnd = _channelHz[^1] + stepHz / 2;
+                double axisSpan = axisEnd - axisStart;
+                float XOf(double hz) => plot.Left + (float)((hz - axisStart) / axisSpan * plot.Width);
+                double tickMHz = NiceStep(axisSpan / 1e6 / Math.Max(1, plot.Width / (Font.Height * 8)));
+                using var center = new StringFormat { Alignment = StringAlignment.Center };
+                int decimals = Math.Clamp((int)Math.Ceiling(-Math.Log10(tickMHz)), 0, 6);
+                double startMHz = axisStart / 1e6, endMHz = axisEnd / 1e6;
+                for (double mhz = Math.Ceiling(startMHz / tickMHz) * tickMHz; mhz <= endMHz + tickMHz * 0.0001; mhz += tickMHz)
                 {
-                    float x = XOf(f);
+                    float x = XOf(mhz * 1e6);
                     g.DrawLine(gridPen, x, plot.Top, x, plot.Bottom);
-                    g.DrawString(f.ToString(tick < 0.1 ? "F3" : tick < 1 ? "F2" : "F1"), Font, textBrush, x, plot.Bottom + 3, centerFmt);
-                }
-                g.DrawString("MHz", Font, textBrush, plot.Right - g.MeasureString("MHz", Font).Width, Height - fh * 1.3f);
-            }
-
-            if (n > 0 && axisSpan > 0)
-            {
-                float slot = (float)plot.Width / n;
-                float gap = slot >= 5 ? 1.5f : 0;
-                float barW = Math.Max(1f, slot - gap);
-                int columns = Math.Min(n, plot.Width);
-                var hitLabels = new List<(float X, int Y, string Text)>();
-
-                for (int c = 0; c < columns; c++)
-                {
-                    int i0 = (int)((long)c * n / columns), i1 = Math.Max(i0 + 1, (int)((long)(c + 1) * n / columns));
-                    double best = double.NaN;
-                    bool marker = false;
-                    int bestIdx = i0;
-                    for (int i = i0; i < Math.Min(i1, n); i++)
-                    {
-                        if (i == _markerIndex) marker = true;
-                        if (!double.IsNaN(_strength[i]) && (double.IsNaN(best) || _strength[i] > best)) { best = _strength[i]; bestIdx = i; }
-                    }
-                    if (double.IsNaN(best)) continue;
-
-                    float x = plot.Left + (float)c * plot.Width / columns;
-                    float w = n <= plot.Width ? barW : Math.Max(1f, (float)plot.Width / columns);
-                    int barTop = YOf(best);
-                    if (plot.Bottom - barTop < 2) barTop = plot.Bottom - 2;
-                    var bar = new RectangleF(x + gap / 2, barTop, w, plot.Bottom - barTop);
-
-                    bool hit = best >= _thresholdDb;
-                    Color c1 = marker ? Color.FromArgb(255, 70, 70) : hit ? Color.FromArgb(255, 190, 40) : Color.FromArgb(40, 200, 140);
-                    Color c2 = Color.FromArgb(marker ? 120 : 60, c1);
-                    using var br = new LinearGradientBrush(bar, c1, c2, 90f);
-                    g.FillRectangle(br, bar);
-
-                    if (hit)
-                        hitLabels.Add((x + w / 2, barTop, (_startMHz + bestIdx * chStep).ToString("F1")));
+                    string label = mhz.ToString($"F{decimals}");
+                    float labelWidth = g.MeasureString(label, Font).Width;
+                    if (x - labelWidth / 2 >= 0 && x + labelWidth / 2 <= Width)
+                        g.DrawString(label, Font, textBrush, x, plot.Bottom + 3, center);
                 }
 
-                using var labelFmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Far };
-                float lastRight = float.NegativeInfinity;
-                foreach (var (x, y, text) in hitLabels)
+                int columns = Math.Min(_strength.Length, plot.Width);
+                using var normalBrush = new SolidBrush(Measured);
+                using var hitBrush = new SolidBrush(AboveThreshold);
+                int zeroY = YOf(0);
+                for (int col = 0; col < columns; col++)
                 {
-                    float tw = g.MeasureString(text, Font).Width;
-                    if (x - tw / 2 < lastRight + 2) continue;
-                    g.DrawString(text, Font, Brushes.Gold, x, Math.Max(fh, y - 2), labelFmt);
-                    lastRight = x + tw / 2;
+                    int best = BestInColumn(col, columns);
+                    if (best < 0) continue;
+                    float left = plot.Left + (float)col * plot.Width / columns;
+                    float width = Math.Max(1, (float)plot.Width / columns - (columns < plot.Width / 4 ? 1 : 0));
+                    int y = YOf(_strength[best]);
+                    g.FillRectangle(_strength[best] >= _thresholdDb ? hitBrush : normalBrush,
+                        left, Math.Min(y, zeroY), width, Math.Max(1, Math.Abs(zeroY - y)));
+                }
+
+                if (_markerIndex >= 0 && _markerIndex < _channelHz.Count)
+                {
+                    float x = XOf(_channelHz[_markerIndex]);
+                    using var markerPen = new Pen(Locked, 2);
+                    g.DrawLine(markerPen, x, plot.Top, x, plot.Bottom);
                 }
             }
 
-            int ty = YOf(_thresholdDb);
-            using var thr = new Pen(Color.FromArgb(255, 80, 80), 1.5f) { DashStyle = DashStyle.Dash };
-            g.DrawLine(thr, plot.Left, ty, plot.Right, ty);
-            string tl = $"Threshold +{_thresholdDb} dB";
-            var tsz = g.MeasureString(tl, Font);
-            g.DrawString(tl, Font, Brushes.OrangeRed, plot.Right - tsz.Width - 4, Math.Max(plot.Top, ty - tsz.Height));
-
-            using var border = new Pen(Color.FromArgb(70, 84, 104));
+            int thresholdY = YOf(_thresholdDb);
+            using var thresholdPen = new Pen(AboveThreshold, 1.5f) { DashStyle = DashStyle.Dash };
+            g.DrawLine(thresholdPen, plot.Left, thresholdY, plot.Right, thresholdY);
+            string thresholdText = $"Threshold {_thresholdDb:0.0} dB";
+            var thresholdSize = TextRenderer.MeasureText(thresholdText, Font, Size.Empty, TextFormatFlags.NoPadding);
+            var thresholdRect = new Rectangle(plot.Right - thresholdSize.Width - 5,
+                Math.Clamp(thresholdY - thresholdSize.Height - 2, plot.Top, plot.Bottom - thresholdSize.Height),
+                thresholdSize.Width + 3, thresholdSize.Height);
+            g.FillRectangle(plotBrush, thresholdRect);
+            TextRenderer.DrawText(g, thresholdText, Font, thresholdRect, AboveThreshold, TextFormatFlags.NoPadding);
+            using var border = new Pen(Color.FromArgb(80, 98, 120));
             g.DrawRectangle(border, plot);
+            TextRenderer.DrawText(g, "Frequency (MHz)", Font,
+                new Rectangle(plot.Left, Height - Font.Height, plot.Width, Font.Height), TextColor,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
 
-            if (n == 0)
+            if (count == 0)
             {
-                using var big = new Font(Font.FontFamily, Font.Size * 1.3f);
                 using var middle = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-                g.DrawString("Start a scan to see signal strength per channel", big, textBrush, plot, middle);
+                g.DrawString(_strength.Length == 0 ? "Start a scan to see channel activity" : "Scanning - waiting for measurements",
+                    Font, textBrush, plot, middle);
             }
         }
 
+        private void DrawLegend(Graphics g)
+        {
+            string[] labels = { "Measured", "Above threshold", "Locked" };
+            Color[] colors = { Measured, AboveThreshold, Locked };
+            int x = 4, y = Font.Height + 4;
+            for (int i = 0; i < labels.Length; i++)
+            {
+                int width = TextRenderer.MeasureText(labels[i], Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+                if (x + width + 20 > Width) break;
+                using var brush = new SolidBrush(colors[i]);
+                g.FillRectangle(brush, x, y + Font.Height / 2 - 3, 10, 6);
+                TextRenderer.DrawText(g, labels[i], Font, new Point(x + 14, y), TextColor, TextFormatFlags.NoPadding);
+                x += width + 28;
+            }
+            if (x + TextRenderer.MeasureText("Hover for details", Font).Width < Width)
+                TextRenderer.DrawText(g, "Hover for details", Font, new Point(x, y), TextColor, TextFormatFlags.NoPadding);
+        }
+
+        private int BestInColumn(int column, int columns)
+        {
+            int first = (int)((long)column * _strength.Length / columns);
+            int end = (int)((long)(column + 1) * _strength.Length / columns);
+            int best = -1;
+            for (int i = first; i < end; i++)
+                if (double.IsFinite(_strength[i]) && (best < 0 || _strength[i] > _strength[best])) best = i;
+            return best;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            Rectangle plot = PlotRectangle();
+            if (!plot.Contains(e.Location) || _strength.Length == 0) { ClearTip(); return; }
+            int columns = Math.Min(_strength.Length, plot.Width);
+            int column = Math.Min(columns - 1, (int)((long)(e.X - plot.Left) * columns / plot.Width));
+            if (column == _hoverColumn) return;
+            _hoverColumn = column;
+            int best = BestInColumn(column, columns);
+            int first = (int)((long)column * _strength.Length / columns);
+            int end = (int)((long)(column + 1) * _strength.Length / columns);
+            string range = end - first > 1 ? $"Strongest of {end - first} channels in this column\n" : "";
+            string message = best < 0 ? "Not yet measured" :
+                $"{range}{FormatMHz(_channelHz[best])} MHz\n{_strength[best]:+0.0;-0.0;0.0} dB above noise";
+            _tip.SetToolTip(this, message);
+        }
+
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); ClearTip(); }
+        private void ClearTip()
+        {
+            if (_hoverColumn < 0) return;
+            _hoverColumn = -1;
+            _tip.SetToolTip(this, null);
+            _tip.Hide(this);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _tip.Dispose();
+            base.Dispose(disposing);
+        }
+
+        private static string FormatMHz(double hz) => (hz / 1e6).ToString("0.000###");
+
         private static double NiceStep(double raw)
         {
-            if (raw <= 0) return 1;
-            double mag = Math.Pow(10, Math.Floor(Math.Log10(raw)));
-            double norm = raw / mag;
-            double nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
-            return nice * mag;
+            if (!double.IsFinite(raw) || raw <= 0) return 1;
+            double magnitude = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+            double normalized = raw / magnitude;
+            return (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
         }
     }
 }
