@@ -58,7 +58,6 @@ namespace RandySDR
                 return true;
 
             _audio.Start();
-            _audio.GenerateTestTone(440);
 
             if (!_usbBuffer.StartReadThread(deviceHandle, sampleRateHz))
                 return false;

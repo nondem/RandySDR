@@ -5,6 +5,7 @@ namespace RandySDR
     {
         private void chkTunerAGC_CheckedChanged(object sender, EventArgs e)
         {
+            InvalidateSquelchCalibration();
             _sdr?.SetTunerAgc(chkTunerAGC.Checked);
             trackTunerGain.Enabled = btnClose.Enabled && !chkTunerAGC.Checked;
             lblTunerGain.Text = chkTunerAGC.Checked
@@ -18,11 +19,13 @@ namespace RandySDR
 
         private void chkRtlAGC_CheckedChanged(object sender, EventArgs e)
         {
+            InvalidateSquelchCalibration();
             _sdr?.SetRtlAgc(chkRtlAGC.Checked);
         }
 
         private void trackTunerGain_Scroll(object sender, EventArgs e)
         {
+            InvalidateSquelchCalibration();
             int snapped = SnapGain(trackTunerGain.Value);
             if (trackTunerGain.Value != snapped)
                 trackTunerGain.Value = snapped;
@@ -42,7 +45,6 @@ namespace RandySDR
                 progressSignal.Value = signalPercent;
                 lblSignalStrength.Text = _demodulator.ChannelDb > -119f ? $"Signal: {_demodulator.ChannelDb:F0} dB" : "Signal:";
 
-                UpdateNoiseFloorTracking();
                 UpdateOverloadIndicator();
             }
         }

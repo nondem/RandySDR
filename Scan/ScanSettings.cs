@@ -26,13 +26,14 @@ namespace RandySDR
         public double StartMHz { get; set; } = 88.1;
         public double StopMHz { get; set; } = 107.9;
         public double StepKHz { get; set; } = 200;
+        public bool UseCbChannels { get; set; }
         public ScanMethod Method { get; set; } = ScanMethod.WidebandFft;
         /// <summary>A channel counts as a signal when it is this many dB above the measured noise floor.</summary>
-        public int ThresholdDb { get; set; } = 10;
+        public int ThresholdDb { get; set; } = 8;
         /// <summary>When true the scanner derives the threshold from the measured noise spread; ThresholdDb is then only the starting value.</summary>
         public bool AutoThreshold { get; set; } = true;
-        /// <summary>Added to the automatic threshold (negative = more sensitive).</summary>
-        public int AutoTrimDb { get; set; } = 0;
+        /// <summary>Added to the automatic threshold (negative = more sensitive). Default -3 dB for better weak-signal detection.</summary>
+        public int AutoTrimDb { get; set; } = -3;
         /// <summary>Time to wait after retuning before measuring (USB buffers hold old-frequency data).</summary>
         public int SettleMs { get; set; } = 120;
         public HoldMode Hold { get; set; } = HoldMode.UntilSignalDrops;
@@ -40,8 +41,8 @@ namespace RandySDR
         public bool AutoSelectMode { get; set; } = true;
         /// <summary>When true the audio squelch follows the detection threshold (see Form1.SquelchLink.cs).</summary>
         public bool LinkSquelch { get; set; } = true;
-        /// <summary>Extra dB added to the linked squelch level (positive = squelch more aggressively).</summary>
-        public int SquelchOffsetDb { get; set; } = 0;
+        /// <summary>Extra dB added to the linked squelch level (positive = squelch more aggressively). Default 2 dB prevents noise leakage.</summary>
+        public int SquelchOffsetDb { get; set; } = 2;
         public bool LogDetections { get; set; } = true;
         /// <summary>Frequencies (MHz) the scanner must skip.</summary>
         public List<double> LockoutsMHz { get; set; } = new();

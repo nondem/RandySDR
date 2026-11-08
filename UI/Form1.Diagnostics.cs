@@ -61,7 +61,10 @@ namespace RandySDR
             diagnostics += $"\nRTL AGC: {(chkRtlAGC.Checked ? "ON ⚠️ (try OFF)" : "OFF ✓")}";
             diagnostics += $"\nPPM Correction: {numPpm.Value} ppm";
             diagnostics += $"\nVolume: {trackVolume.Value}%";
-            diagnostics += trackSquelch.Value == 0 ? "\nSquelch: Off" : $"\nSquelch: {trackSquelch.Value}% ({FmDemodulator.SquelchPercentToDb(trackSquelch.Value):F0} dB), in-channel {_demodulator?.ChannelDb:F0} dB, {(_demodulator?.SquelchOpen == true ? "OPEN" : "CLOSED")}";
+            float? squelch = CurrentSquelchThreshold();
+            diagnostics += squelch is float threshold
+                ? $"\nSquelch: {threshold:F1} dB{(SquelchLinked ? " (linked)" : " (manual)")}, in-channel {_demodulator?.ChannelDb:F0} dB, {(_demodulator?.SquelchOpen == true ? "OPEN" : "CLOSED")}"
+                : "\nSquelch: Off";
             diagnostics += $"\nDe-emphasis: {(chkDeEmphasis.Checked ? "ON ✓" : "OFF")}";
 
             MessageBox.Show(diagnostics, "Frequency Diagnostics",

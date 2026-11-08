@@ -93,7 +93,7 @@
             timerSignalLevel = new System.Windows.Forms.Timer(components);
             chkSwapIQ = new CheckBox();
             chkInvertDemod = new CheckBox();
-            progressSignal = new ProgressBar();
+            progressSignal = new SignalMeter();
             groupBox1.SuspendLayout();
             groupBox2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)numSampleRate).BeginInit();
@@ -582,7 +582,7 @@
             lblVolume.Name = "lblVolume";
             lblVolume.Size = new Size(109, 23);
             lblVolume.TabIndex = 18;
-            lblVolume.Text = "Volume: 50%";
+            lblVolume.Text = "Volume: 5%";
             // 
             // trackVolume
             // 
@@ -594,7 +594,7 @@
             trackVolume.Size = new Size(335, 40);
             trackVolume.TabIndex = 19;
             trackVolume.TickFrequency = 10;
-            trackVolume.Value = 50;
+            trackVolume.Value = 5;
             trackVolume.Scroll += trackVolume_Scroll;
             // 
             // lblSquelch
@@ -868,7 +868,6 @@
             progressSignal.Margin = new Padding(4);
             progressSignal.Name = "progressSignal";
             progressSignal.Size = new Size(335, 24);
-            progressSignal.Style = ProgressBarStyle.Continuous;
             progressSignal.TabIndex = 16;
             // 
             // groupBoxAudio
@@ -996,6 +995,6 @@
         private System.Windows.Forms.Timer timerSignalLevel;
         private CheckBox chkSwapIQ;
         private CheckBox chkInvertDemod;
-        private ProgressBar progressSignal;
+        private SignalMeter progressSignal;
     }
 }

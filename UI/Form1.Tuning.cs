@@ -25,6 +25,7 @@ namespace RandySDR
 
         private void numSampleRate_ValueChanged(object sender, EventArgs e)
         {
+            InvalidateSquelchCalibration();
             if (_sdr != null)
             {
                 uint sampleRate = (uint)(numSampleRate.Value * 1_000_000);
@@ -55,6 +56,7 @@ namespace RandySDR
 
         private void numTunerBandwidth_ValueChanged(object sender, EventArgs e)
         {
+            InvalidateSquelchCalibration();
             int bandwidthKHz = (int)numTunerBandwidth.Value;
             if (trackRxBandwidth.Value != bandwidthKHz)
                 trackRxBandwidth.Value = bandwidthKHz;

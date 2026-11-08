@@ -231,12 +231,34 @@ namespace RandySDR
 
         private int BestInColumn(int column, int columns)
         {
-            int first = (int)((long)column * _strength.Length / columns);
-            int end = (int)((long)(column + 1) * _strength.Length / columns);
+            var (first, end) = ColumnRange(column, columns);
             int best = -1;
             for (int i = first; i < end; i++)
                 if (double.IsFinite(_strength[i]) && (best < 0 || _strength[i] > _strength[best])) best = i;
             return best;
+        }
+
+        private (int First, int End) ColumnRange(int column, int columns)
+        {
+            double step = _channelHz.Count > 1 ? _channelHz[1] - _channelHz[0] : 1000;
+            double start = _channelHz[0] - step / 2;
+            double span = _channelHz[^1] + step / 2 - start;
+            double lower = start + span * column / columns;
+            double upper = start + span * (column + 1) / columns;
+
+            int LowerBound(double value)
+            {
+                int lo = 0, hi = _channelHz.Count;
+                while (lo < hi)
+                {
+                    int mid = lo + (hi - lo) / 2;
+                    if (_channelHz[mid] < value) lo = mid + 1;
+                    else hi = mid;
+                }
+                return lo;
+            }
+
+            return (LowerBound(lower), LowerBound(upper));
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -249,10 +271,9 @@ namespace RandySDR
             if (column == _hoverColumn) return;
             _hoverColumn = column;
             int best = BestInColumn(column, columns);
-            int first = (int)((long)column * _strength.Length / columns);
-            int end = (int)((long)(column + 1) * _strength.Length / columns);
+            var (first, end) = ColumnRange(column, columns);
             string range = end - first > 1 ? $"Strongest of {end - first} channels in this column\n" : "";
-            string message = best < 0 ? "Not yet measured" :
+            string message = best < 0 ? (first == end ? "No channel in this column" : "Not yet measured") :
                 $"{range}{FormatMHz(_channelHz[best])} MHz\n{_strength[best]:+0.0;-0.0;0.0} dB above noise";
             _tip.SetToolTip(this, message);
         }

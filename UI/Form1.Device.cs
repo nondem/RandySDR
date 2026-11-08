@@ -102,6 +102,7 @@ namespace RandySDR
             
             _pipeline?.Dispose();
             _pipeline = null;
+            _noiseFloorDb = float.NaN;
             _spectrum = null;
             _spectrumTimer.Stop();
             picSpectrum.Clear();
@@ -142,6 +143,7 @@ namespace RandySDR
 
                 btnStart.Enabled = false;
                 btnStop.Enabled = true;
+                ApplyLinkedSquelch();
 
                 if (_sdr.IsTestMode)
                 {
@@ -168,6 +170,7 @@ namespace RandySDR
             _pipeline?.Stop();
             btnStart.Enabled = true;
             btnStop.Enabled = false;
+            ApplyLinkedSquelch();
             lblStatus.Text = "Stopped";
             lblStatus.ForeColor = Color.Orange;
             progressSignal.Value = 0;

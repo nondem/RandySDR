@@ -24,6 +24,7 @@ namespace RandySDR
         private ListView _lstLog = null!;
         private ListBox _lstLockouts = null!;
 
+        private const int CbPresetIndex = 6;
         private static readonly (string Name, double Start, double Stop, double Step)[] ScanPresets =
         {
             ("Custom", 0, 0, 0),
@@ -32,6 +33,7 @@ namespace RandySDR
             ("NOAA weather 162.400-162.550 / 25 kHz", 162.4, 162.55, 25),
             ("Marine VHF 156-162.6 / 25 kHz", 156, 162.6, 25),
             ("2 m ham 144-148 / 5 kHz", 144, 148, 5),
+            ("CB US standard 40 channels (AM)", 26.965, 27.405, 10),
             ("70 cm ham 430-450 / 5 kHz", 430, 450, 5),
             ("FRS/GMRS 462.550-467.725 / 12.5 kHz", 462.55, 467.725, 12.5),
         };
@@ -47,6 +49,7 @@ namespace RandySDR
             _numStart = NewNumeric(3, 0.5m, 1766m, 0.1m);
             _numStop = NewNumeric(3, 0.5m, 1766m, 0.1m);
             _numStep = NewNumeric(2, 1m, 5000m, 5m);
+            new ToolTip().SetToolTip(_numStep, "CB uses its standard channel list, including gaps; other presets use a regular frequency grid.");
             _cmbMethod = NewCombo(new[] { "Wideband FFT (fast)", "Tune each channel (slow)" });
             _cmbHold = NewCombo(new[] { "Stay until signal drops", "Stay until I press Resume", "Stay for fixed time" });
             _lblThreshold = new Label { AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
@@ -55,7 +58,7 @@ namespace RandySDR
             var thresholdTip = new ToolTip();
             thresholdTip.SetToolTip(_chkAutoThreshold, "Learns the threshold from the measured noise while scanning. Uncheck to set it manually with the slider.");
             thresholdTip.SetToolTip(_numAutoTrim, "Nudges the automatic threshold. Negative = more sensitive, positive = fewer false detections.");
-            _trackThreshold = new TrackBar { Dock = DockStyle.Fill, AutoSize = false, Height = 32, Minimum = 3, Maximum = 40, TickFrequency = 3, Margin = new Padding(0, 0, 0, 0) };
+            _trackThreshold = new TrackBar { Dock = DockStyle.Fill, AutoSize = false, Height = 32, Minimum = 3, Maximum = 40, TickFrequency = 3, Value = 8, Margin = new Padding(0, 0, 0, 0) };
             _numHold = NewNumeric(1, 0.5m, 120m, 0.5m);
             _numSettle = NewNumeric(0, 40m, 1000m, 10m);
             _chkAutoMode = new CheckBox { Text = "Auto-select mode by band", AutoSize = true, Margin = new Padding(0, 2, 16, 2) };
@@ -93,7 +96,8 @@ namespace RandySDR
             _cardDetect = AddScanCard("Detection", Stack(
                 OptionRow(_chkAutoThreshold, "Auto trim (dB)", _numAutoTrim),
                 FieldRow((_lblThreshold, _trackThreshold)),
-                OptionRow(_chkLinkSquelch, "Squelch offset (dB)", _numSquelchOffset)));
+                OptionRow(_chkLinkSquelch, "Squelch offset (dB)", _numSquelchOffset),
+                _lblSquelchLinkStatus));
             _cardBehave = AddScanCard("Behaviour", Stack(
                 FieldRow(("When a signal is found", _cmbHold), ("Hold / drop time (s)", _numHold), ("Settle time (ms)", _numSettle)),
                 checks));
@@ -108,7 +112,13 @@ namespace RandySDR
             UpdateScannerMinimumHeight();
 
             _cmbPreset.SelectedIndexChanged += PresetChanged;
-            foreach (var n in new[] { _numStart, _numStop, _numStep, _numHold, _numSettle })
+            foreach (var n in new[] { _numStart, _numStop, _numStep })
+                n.ValueChanged += (_, _) =>
+                {
+                    if (!_loadingScanUi) _cmbPreset.SelectedIndex = 0;
+                    ReadScanSettingsFromUi();
+                };
+            foreach (var n in new[] { _numHold, _numSettle })
                 n.ValueChanged += (_, _) => ReadScanSettingsFromUi();
             _cmbMethod.SelectedIndexChanged += (_, _) => ReadScanSettingsFromUi();
             _cmbHold.SelectedIndexChanged += (_, _) => ReadScanSettingsFromUi();
@@ -298,6 +308,8 @@ namespace RandySDR
             _chkAutoThreshold.Checked = s.AutoThreshold;
             _numAutoTrim.Value = Math.Clamp(s.AutoTrimDb, (int)_numAutoTrim.Minimum, (int)_numAutoTrim.Maximum);
             _numSquelchOffset.Value = Math.Clamp(s.SquelchOffsetDb, (int)_numSquelchOffset.Minimum, (int)_numSquelchOffset.Maximum);
+            _chkLinkSquelch.Checked = s.LinkSquelch;
+            _cmbPreset.SelectedIndex = s.UseCbChannels ? CbPresetIndex : 0;
             _loadingScanUi = false;
             RefreshLockoutList();
             RefreshThresholdLabel();
@@ -310,6 +322,7 @@ namespace RandySDR
             s.StartMHz = (double)_numStart.Value;
             s.StopMHz = (double)_numStop.Value;
             s.StepKHz = (double)_numStep.Value;
+            s.UseCbChannels = _cmbPreset.SelectedIndex == CbPresetIndex;
             s.Method = (ScanMethod)Math.Max(0, _cmbMethod.SelectedIndex);
             s.Hold = (HoldMode)Math.Max(0, _cmbHold.SelectedIndex);
             // The manual value is only written when auto is off, so auto mode never overwrites it.
@@ -350,12 +363,21 @@ namespace RandySDR
         private void PresetChanged(object? sender, EventArgs e)
         {
             int i = _cmbPreset.SelectedIndex;
-            if (i <= 0) return;
+            if (i <= 0)
+            {
+                ReadScanSettingsFromUi();
+                return;
+            }
             var p = ScanPresets[i];
             _loadingScanUi = true;
             _numStart.Value = (decimal)p.Start;
             _numStop.Value = (decimal)p.Stop;
             _numStep.Value = (decimal)p.Step;
+            if (i == CbPresetIndex)
+            {
+                _chkAutoMode.Checked = true;
+                rdoDemodAm.Checked = true;
+            }
             _loadingScanUi = false;
             ReadScanSettingsFromUi();
         }
@@ -385,6 +407,8 @@ namespace RandySDR
                 return;
             }
 
+            _noiseFloorDb = float.NaN;
+            ApplyLinkedSquelch();
             // Wideband hops span ~1.9 MHz; a narrow tuner IF filter (default 200 kHz) would attenuate all but the middle of each hop.
             _sdr?.SetTunerBandwidth(0);
             _scanTimer.Start();
@@ -398,6 +422,7 @@ namespace RandySDR
                 () => (int)(numSampleRate.Value * 1_000_000m));
             sc.SignalLocked += OnScanLocked;
             sc.Updated += OnScanUpdated;
+            sc.QuietChannelMeasured += OnQuietChannelMeasured;
             return sc;
         }
 
@@ -474,6 +499,7 @@ namespace RandySDR
             var state = sc?.State ?? ScanState.Idle;
             bool running = state != ScanState.Idle;
 
+            ApplyLinkedSquelch();
             _btnScanToggle.Text = running ? "Stop scan" : "Start scan";
             _btnResume.Enabled = state == ScanState.Locked;
             _btnLockout.Enabled = true;
@@ -491,7 +517,8 @@ namespace RandySDR
 
             int marker = -1;
             if (state == ScanState.Locked)
-                marker = (int)Math.Round((sc.LockedHz - _scanSettings.StartMHz * 1e6) / (_scanSettings.StepKHz * 1000));
+                for (int i = 0; i < sc.ChannelHz.Count; i++)
+                    if (sc.ChannelHz[i] == sc.LockedHz) { marker = i; break; }
 
             _scanGraph.SetData(sc.Strength, sc.ChannelHz, marker, true);
             _lblScanStatus.Text = state == ScanState.Locked
@@ -591,11 +618,11 @@ namespace RandySDR
         {
             RadioButton? target = mhz switch
             {
-                >= 87.5 and <= 108 => rdoDemodWideFm,
-                > 108 and <= 137 => rdoDemodAm,
+                >= 87.5 and <= 108 => rdoDemodWideFm,          // FM broadcast - use Wide FM for best audio quality
+                > 108 and <= 137 => rdoDemodAm,                  // Airband - AM mode for ATC communications
                 >= 25 and <= 30 => rdoDemodAm,
-                >= 137 and <= 174 => rdoDemodNarrowFm,
-                >= 430 and <= 470 => rdoDemodNarrowFm,
+                >= 137 and <= 174 => rdoDemodNarrowFm,          // Amateur radio 2m - Narrow FM for local repeaters
+                >= 430 and <= 470 => rdoDemodNarrowFm,          // Amateur radio 70cm - Narrow FM
                 _ => null
             };
             if (target != null) target.Checked = true;

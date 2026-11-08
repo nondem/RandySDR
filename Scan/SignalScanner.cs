@@ -16,9 +16,12 @@ namespace RandySDR
         private const double MinUsableFraction = 0.8;
         private const double MinAutoDb = 3;
         private const double MaxAutoDb = 40;
-        private const double AutoSigmas = 5;
-        private const double AutoMinMarginDb = 4;
-        private const double AutoSmoothing = 0.5;
+        /// <summary>Sigma multiplier for automatic threshold calculation. Higher = more robust to noise spikes, lower = more sensitive.</summary>
+        private const double AutoSigmas = 4;
+        /// <summary>Minimum margin above median noise for automatic threshold.</summary>
+        private const double AutoMinMarginDb = 3;
+        /// <summary>Smoothing factor for threshold learning (0.5 = halfway, 0.8 = slower but smoother). Higher = faster convergence.</summary>
+        private const double AutoSmoothing = 0.7;
 
         private double[] _hopThresholdDb = Array.Empty<double>();
         private double _autoThresholdDb = double.NaN;
@@ -71,6 +74,8 @@ namespace RandySDR
         public event Action<double>? SignalReleased;
         /// <summary>Strength array, floor or state changed; redraw status/graph.</summary>
         public event Action? Updated;
+        /// <summary>A settled hop has a quiet centre; the value is the demodulator's in-channel level in dBFS.</summary>
+        public event Action<float>? QuietChannelMeasured;
 
         public SignalScanner(ScanSettings settings, Action<uint> tune, Func<ReceiverPipeline?> pipeline, Func<int> sampleRate)
         {
@@ -91,6 +96,11 @@ namespace RandySDR
             if (_s.StopMHz <= _s.StartMHz || _s.StepKHz <= 0)
             {
                 error = "Stop frequency must be above start, and step must be positive.";
+                return false;
+            }
+            if (_s.UseCbChannels && (_s.StartMHz != 26.965 || _s.StopMHz != 27.405 || _s.StepKHz != 10))
+            {
+                error = "The CB channel plan requires the standard range and 10 kHz nominal step. Select the CB preset again.";
                 return false;
             }
 
@@ -124,7 +134,7 @@ namespace RandySDR
             double hz = _channelHz[ch];
             // Neighbouring grid points on fine rasters see the same carrier; disarm them too.
             for (int i = 0; i < _channelHz.Length; i++)
-                if (Math.Abs(_channelHz[i] - hz) <= 12_500) _armed[i] = false;
+                if (_s.UseCbChannels ? i == ch : Math.Abs(_channelHz[i] - hz) <= 12_500) _armed[i] = false;
             _lockedChannel = -1;
             SignalReleased?.Invoke(hz);
             BeginHop(); // re-measure the same hop: other channels in it may also be active
@@ -135,7 +145,10 @@ namespace RandySDR
             double stepHz = _s.StepKHz * 1000;
             double startHz = _s.StartMHz * 1e6;
             int n = (int)Math.Floor((_s.StopMHz * 1e6 - startHz) / stepHz + 1e-6) + 1;
-            _channelHz = Enumerable.Range(0, n).Select(i => startHz + i * stepHz).ToArray();
+            _channelHz = _s.UseCbChannels
+                ? CbChannels.FrequenciesHz.Select(hz => (double)hz).ToArray()
+                : Enumerable.Range(0, n).Select(i => startHz + i * stepHz).ToArray();
+            n = _channelHz.Length;
             _armed = Enumerable.Repeat(true, n).ToArray();
             Strength = Enumerable.Repeat(double.NaN, n).ToArray();
             _usedStep = new[] { stepHz };
@@ -227,9 +240,14 @@ namespace RandySDR
             double floor = _meas.NoiseFloorDb(Math.Clamp(stepHz, 25_000, 100_000));
             NoiseFloorDb = floor;
             // Fine grids (e.g. 5 kHz) are narrower than an NFM signal; measure over at least one voice-channel width.
-            double widthHz = Math.Max(stepHz, 12_500);
+            double widthHz = _s.UseCbChannels ? 10_000 : Math.Max(stepHz, 12_500);
             LearnThreshold(floor, widthHz);
             double threshold = EffectiveThresholdDb;
+
+            double centreAboveFloor = HopMeasurement.ToDb(_meas.CentredChannelPower(25_000)) - floor;
+            float channelDb = p.Demodulator.ChannelDb;
+            if (centreAboveFloor < threshold - HysteresisDb && float.IsFinite(channelDb) && channelDb > -119f)
+                QuietChannelMeasured?.Invoke(channelDb);
 
             int best = -1;
             double bestDb = double.NegativeInfinity;
@@ -299,7 +317,8 @@ namespace RandySDR
             double stepHz = _usedStep[0];
             double floor = _meas.NoiseFloorDb(Math.Clamp(stepHz, 25_000, 100_000));
             NoiseFloorDb = floor;
-            double db = HopMeasurement.ToDb(_meas.CentredChannelPower(Math.Max(stepHz, 12_500))) - floor;
+            double widthHz = _s.UseCbChannels ? 10_000 : Math.Max(stepHz, 12_500);
+            double db = HopMeasurement.ToDb(_meas.CentredChannelPower(widthHz)) - floor;
             LockedStrengthDb = db;
             Strength[_lockedChannel] = db;
 

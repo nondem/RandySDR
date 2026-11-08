@@ -120,8 +120,17 @@
         public static float SquelchPercentToDb(int percent) => SquelchMinDb + percent * (SquelchMaxDb - SquelchMinDb) / 100f;
         public static int DbToSquelchPercent(float db) => (int)Math.Clamp(Math.Round((db - SquelchMinDb) * 100f / (SquelchMaxDb - SquelchMinDb)), 0, 100);
 
+        private volatile float _squelchThresholdDb = float.NaN;
         /// <summary>Squelch threshold in dBFS; null disables squelch.</summary>
-        public float? SquelchThresholdDb { get; set; }
+        public float? SquelchThresholdDb
+        {
+            get
+            {
+                float value = _squelchThresholdDb;
+                return float.IsNaN(value) ? null : value;
+            }
+            set => _squelchThresholdDb = value ?? float.NaN;
+        }
         /// <summary>Smoothed in-channel signal level in dBFS (what the squelch compares against).</summary>
         public float ChannelDb => _channelDb;
         public bool SquelchOpen => _sqOpen;

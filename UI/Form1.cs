@@ -82,7 +82,8 @@ namespace RandySDR
             if (trackSquelch.Maximum < 100) trackSquelch.Maximum = 100;
             if (trackSquelch.Minimum > 0) trackSquelch.Minimum = 0;
 
-            trackVolume.Value = Math.Clamp(50, trackVolume.Minimum, trackVolume.Maximum);
+            // Start with low volume to prevent sudden loud noise on first startup
+            trackVolume.Value = Math.Clamp(5, trackVolume.Minimum, trackVolume.Maximum);
             trackSquelch.Value = Math.Clamp(0, trackSquelch.Minimum, trackSquelch.Maximum);
 
             chkDeEmphasis.Checked = true;
@@ -134,6 +135,7 @@ namespace RandySDR
             chkSwapIQ.Enabled = deviceOpen;
             chkInvertDemod.Enabled = deviceOpen;
             cmbDevices.Enabled = !deviceOpen;
+            if (_chkLinkSquelch != null) ApplyLinkedSquelch();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
