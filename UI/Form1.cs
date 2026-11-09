@@ -11,8 +11,13 @@ namespace RandySDR
         private SpectrumAnalyzer? _spectrum;
         private readonly System.Windows.Forms.Timer _spectrumTimer = new() { Interval = 50 };
 
-        public Form1()
+        public Form1() : this(null)
         {
+        }
+
+        internal Form1(string? layoutDirectory)
+        {
+            _layoutDirectory = layoutDirectory;
             InitializeComponent();
             _sdr = new RtlSdrWrapper();
             LoadConnectedDevices();
@@ -146,6 +151,7 @@ namespace RandySDR
             _pipeline?.Dispose();
             _pipeline = null;
             _sdr?.CloseDevice();
+
             base.OnFormClosing(e);
         }
 

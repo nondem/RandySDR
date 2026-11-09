@@ -23,10 +23,12 @@ namespace RandySDR
     /// <summary>User-editable scanner configuration. Persisted as JSON in %AppData%\RandySDR\scan-settings.json.</summary>
     public sealed class ScanSettings
     {
+        public const string LawEnforcementVhfPresetName = "Law Enforcement VHF 136-174 MHz";
         public double StartMHz { get; set; } = 88.1;
         public double StopMHz { get; set; } = 107.9;
         public double StepKHz { get; set; } = 200;
         public bool UseCbChannels { get; set; }
+        public string? PresetName { get; set; }
         public ScanMethod Method { get; set; } = ScanMethod.WidebandFft;
         /// <summary>A channel counts as a signal when it is this many dB above the measured noise floor.</summary>
         public int ThresholdDb { get; set; } = 8;

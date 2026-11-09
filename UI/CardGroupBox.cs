@@ -22,6 +22,14 @@ namespace RandySDR
         private bool _active = true;
         private string? _badgeText;
         private Color? _badgeColor;
+        private bool _workspaceFocused;
+
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool WorkspaceFocused
+        {
+            get => _workspaceFocused;
+            set { if (_workspaceFocused != value) { _workspaceFocused = value; Invalidate(); } }
+        }
 
         public CardGroupBox()
         {
@@ -51,6 +59,24 @@ namespace RandySDR
         }
 
         private bool _userCollapsed;
+        private Point? _headerMouseDown;
+        private bool _dragStarted;
+        private bool? _dropBefore;
+
+        public event EventHandler? HeaderDragStarted;
+
+        internal void CancelHeaderClick()
+        {
+            _dragStarted = true;
+            _headerMouseDown = null;
+        }
+
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool? DropBefore
+        {
+            get => _dropBefore;
+            set { if (_dropBefore != value) { _dropBefore = value; Invalidate(); } }
+        }
 
         /// <summary>Raised when the card folds to, or unfolds from, its header strip.</summary>
         public event EventHandler? CollapsedChanged;
@@ -81,12 +107,33 @@ namespace RandySDR
         {
             base.OnMouseDown(e);
             if (e.Button != MouseButtons.Left || e.Y > HeaderHeight) return;
-            SetCollapsed(!_userCollapsed);
+            _headerMouseDown = e.Location;
+            _dragStarted = false;
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Left && _headerMouseDown.HasValue && !_dragStarted && e.Y <= HeaderHeight)
+                SetCollapsed(!_userCollapsed);
+            _headerMouseDown = null;
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (_headerMouseDown is Point start && e.Button == MouseButtons.Left && !_dragStarted)
+            {
+                var dragBounds = new Rectangle(start.X - SystemInformation.DragSize.Width / 2,
+                    start.Y - SystemInformation.DragSize.Height / 2,
+                    SystemInformation.DragSize.Width, SystemInformation.DragSize.Height);
+                if (!dragBounds.Contains(e.Location))
+                {
+                    _dragStarted = true;
+                    _headerMouseDown = null;
+                    HeaderDragStarted?.Invoke(this, EventArgs.Empty);
+                }
+            }
             Cursor = e.Y <= HeaderHeight ? Cursors.Hand : Cursors.Default;
         }
 
@@ -119,7 +166,13 @@ namespace RandySDR
                 using var glow = new Pen(Color.FromArgb(60, AccentColor), 4f);
                 g.DrawPath(glow, path);
             }
-            using (var pen = new Pen(_active ? AccentColor : Color.FromArgb(38, 42, 54), _active ? 1.5f : 1f)) g.DrawPath(pen, path);
+            using (var pen = new Pen(_workspaceFocused ? Color.White : _active ? AccentColor : Color.FromArgb(38, 42, 54), _workspaceFocused ? 2f : _active ? 1.5f : 1f)) g.DrawPath(pen, path);
+            if (_dropBefore.HasValue)
+            {
+                using var dropPen = new Pen(Color.Gold, 4f);
+                int y = _dropBefore.Value ? 4 : Height - 5;
+                g.DrawLine(dropPen, 12, y, Width - 13, y);
+            }
 
             Color barColor = _active ? AccentColor : Color.FromArgb(70, 76, 90);
             using (var bar = new SolidBrush(barColor)) g.FillRectangle(bar, 10, 5, 4, Font.Height);

@@ -10,8 +10,8 @@ namespace RandySDR
         private void ApplyVisualPolish()
         {
             BackColor = WindowColor;
-            _leftPanel.BackColor = WindowColor;
-            _rightPanel.BackColor = WindowColor;
+            _workspaceScroll.BackColor = WindowColor;
+            _workspace.BackColor = WindowColor;
             StyleButtons(this);
 
             btnStart.BackColor = Color.FromArgb(30, 120, 70);

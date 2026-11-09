@@ -26,7 +26,7 @@ namespace RandySDR
 
             SampleRate = sampleRate;
             BinHz = (double)sampleRate / FftSize;
-            Array.Clear(_power);
+            Array.Clear(_power, 0, _power.Length);
 
             int segs = Math.Min(Segments, samples / FftSize);
             for (int s = 0; s < segs; s++)
@@ -44,8 +44,13 @@ namespace RandySDR
             for (int k = c - DcMaskBins; k <= c + DcMaskBins; k++)
                 _power[k] = (lo + hi) / 2f;
 
+            // Pre-calculate prefix sums to avoid repeated calculations
+            double sum = 0;
             for (int k = 0; k < FftSize; k++)
-                _prefix[k + 1] = _prefix[k] + _power[k];
+            {
+                sum += _power[k];
+                _prefix[k + 1] = sum;
+            }
             return true;
         }
 

@@ -26,6 +26,11 @@ namespace RandySDR
 #pragma warning disable WFO5001
                 Application.SetColorMode(SystemColorMode.Dark);
 #pragma warning restore WFO5001
+                
+                // Explicitly set DPI awareness to prevent runtime detection issues
+                System.Windows.Forms.Application.EnableVisualStyles();
+                System.Windows.Forms.Application.SetHighDpiMode(HighDpiMode.SystemAware);
+                
                 Application.Run(new Form1());
             }
             catch (Exception ex)

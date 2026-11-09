@@ -25,6 +25,8 @@ namespace RandySDR
         private ListBox _lstLockouts = null!;
 
         private const int CbPresetIndex = 6;
+        private const int LawEnforcementVhfPresetIndex = 9;
+        private const int LawEnforcementUhfPresetIndex = 10;
         private static readonly (string Name, double Start, double Stop, double Step)[] ScanPresets =
         {
             ("Custom", 0, 0, 0),
@@ -36,15 +38,14 @@ namespace RandySDR
             ("CB US standard 40 channels (AM)", 26.965, 27.405, 10),
             ("70 cm ham 430-450 / 5 kHz", 430, 450, 5),
             ("FRS/GMRS 462.550-467.725 / 12.5 kHz", 462.55, 467.725, 12.5),
+            (ScanSettings.LawEnforcementVhfPresetName, 136, 174, 1.25),
+            ("Law Enforcement UHF 450-470 MHz", 450, 470, 6.25),
         };
 
         private void BuildScannerPanel()
         {
-            _scanStack = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 0, MinimumSize = new Size(560, 0) };
-            _scanStack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            _rightPanel.Controls.Add(_scanStack);
-
             _cmbPreset = NewCombo(ScanPresets.Select(p => p.Name).ToArray());
+            new ToolTip().SetToolTip(_cmbPreset, "Law Enforcement VHF excludes NOAA weather frequencies (162.400-162.550 MHz) and a 50 kHz guard on each side.");
             BuildSquelchLinkControls();
             _numStart = NewNumeric(3, 0.5m, 1766m, 0.1m);
             _numStop = NewNumeric(3, 0.5m, 1766m, 0.1m);
@@ -105,11 +106,15 @@ namespace RandySDR
             _cardGraph = AddScanCard("Activity Graph", _scanGraph, 50);
             _cardLog = AddScanCard("Detection Log", ListSection(null, _lstLog, btnClearLog, btnSaveLog), 25);
             _cardLock = AddScanCard("Locked-out Frequencies", ListSection("Skipped by the scanner", _lstLockouts, btnRemoveLockout, btnClearLockouts), 25);
+            _wideCards.UnionWith(new[] { _cardRange, _cardDetect, _cardBehave });
             HookCardCollapse(groupBox1, groupBox2, groupBox3, groupBox4, groupBoxAudio, groupBox6,
                 _cardRange, _cardDetect, _cardBehave, _cardControl, _cardGraph, _cardLog, _cardLock);
 
             LoadScanSettingsToUi();
-            UpdateScannerMinimumHeight();
+            if (!new DashboardLayoutStore(LayoutDirectory).Exists)
+                LoadPanelOrder();
+            SizeWorkspace();
+            InitializeDashboard();
 
             _cmbPreset.SelectedIndexChanged += PresetChanged;
             foreach (var n in new[] { _numStart, _numStop, _numStep })
@@ -136,62 +141,29 @@ namespace RandySDR
             btnRemoveLockout.Click += (_, _) => RemoveSelectedLockout();
             btnClearLockouts.Click += (_, _) => { _scanSettings.LockoutsMHz.Clear(); RefreshLockoutList(); };
 
+            // Optimize: Reduce timer interval from 25ms to 20ms for better responsiveness
+            // while maintaining performance
+            _scanTimer.Interval = 20;
             _scanTimer.Tick += (_, _) => _scanner?.Tick();
             UpdateScanUi();
         }
 
-        private TableLayoutPanel _scanStack = null!;
         private CardGroupBox _cardRange = null!, _cardDetect = null!, _cardBehave = null!, _cardControl = null!,
             _cardGraph = null!, _cardLog = null!, _cardLock = null!;
 
-        private void UpdateScannerMinimumHeight()
-        {
-            int fixedHeight = 0;
-            int minimumWidth = 560;
-            foreach (var card in _autoCards)
-                if (!card.Collapsed)
-                    minimumWidth = Math.Max(minimumWidth, card.GetPreferredSize(Size.Empty).Width + card.Margin.Horizontal);
-            float percentTotal = 0, requiredPercentHeight = 0;
-            foreach (Control control in _scanStack.Controls)
-            {
-                if (control is not CardGroupBox card) continue;
-                var style = _scanStack.RowStyles[_scanStack.GetRow(card)];
-                if (style.SizeType == SizeType.Percent)
-                {
-                    int minimum = card == _cardGraph ? _scanGraph.MinimumSize.Height + card.HeaderHeight + card.Padding.Bottom
-                        : card == _cardLock ? 155 : 135;
-                    percentTotal += style.Height;
-                    requiredPercentHeight = Math.Max(requiredPercentHeight, (minimum + card.Margin.Vertical) / style.Height);
-                }
-                else if (style.SizeType == SizeType.Absolute)
-                    fixedHeight += (int)Math.Ceiling(style.Height);
-                else
-                    fixedHeight += card.GetPreferredSize(new Size(Math.Max(minimumWidth, _scanStack.ClientSize.Width), 0)).Height + card.Margin.Vertical;
-            }
-            int minimumHeight = fixedHeight + (int)Math.Ceiling(percentTotal * requiredPercentHeight);
-            _scanStack.MinimumSize = new Size(minimumWidth, minimumHeight);
-        }
-
-        /// <summary>Adds a card to the scanner stack. weight 0 = size to content, otherwise a share of the leftover height.</summary>
         private CardGroupBox AddScanCard(string title, Control content, float weight = 0)
         {
             var card = new CardGroupBox
             {
                 Text = title,
-                Dock = DockStyle.Fill,
                 Padding = new Padding(12, 8, 12, 10),
-                Margin = new Padding(0, 0, 0, 6)
             };
             content.Dock = DockStyle.Fill;
             card.Controls.Add(content);
-            if (weight <= 0)
-            {
-                card.AutoSize = true;
-                card.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-                _autoCards.Add(card);
-            }
-            _scanStack.RowStyles.Add(weight > 0 ? new RowStyle(SizeType.Percent, weight) : new RowStyle(SizeType.AutoSize));
-            _scanStack.Controls.Add(card, 0, _scanStack.RowCount++);
+            int height = weight > 0
+                ? (title == "Activity Graph" ? 320 : 220)
+                : content.GetPreferredSize(new Size(Math.Max(620, numFrequency.MinimumSize.Width), 0)).Height + card.HeaderHeight + card.Padding.Vertical + 12;
+            AddWorkspaceCard(card, "scan-" + title.ToLowerInvariant().Replace(' ', '-'), height);
             return card;
         }
 
@@ -309,7 +281,10 @@ namespace RandySDR
             _numAutoTrim.Value = Math.Clamp(s.AutoTrimDb, (int)_numAutoTrim.Minimum, (int)_numAutoTrim.Maximum);
             _numSquelchOffset.Value = Math.Clamp(s.SquelchOffsetDb, (int)_numSquelchOffset.Minimum, (int)_numSquelchOffset.Maximum);
             _chkLinkSquelch.Checked = s.LinkSquelch;
-            _cmbPreset.SelectedIndex = s.UseCbChannels ? CbPresetIndex : 0;
+            int presetIndex = Array.FindIndex(ScanPresets, p => p.Name == s.PresetName
+                && p.Start == s.StartMHz && p.Stop == s.StopMHz && p.Step == s.StepKHz);
+            _cmbPreset.SelectedIndex = s.UseCbChannels ? CbPresetIndex
+                : IsLawEnforcementPreset(presetIndex) ? presetIndex : 0;
             _loadingScanUi = false;
             RefreshLockoutList();
             RefreshThresholdLabel();
@@ -323,6 +298,8 @@ namespace RandySDR
             s.StopMHz = (double)_numStop.Value;
             s.StepKHz = (double)_numStep.Value;
             s.UseCbChannels = _cmbPreset.SelectedIndex == CbPresetIndex;
+            s.PresetName = IsLawEnforcementPreset(_cmbPreset.SelectedIndex)
+                ? ScanPresets[_cmbPreset.SelectedIndex].Name : null;
             s.Method = (ScanMethod)Math.Max(0, _cmbMethod.SelectedIndex);
             s.Hold = (HoldMode)Math.Max(0, _cmbHold.SelectedIndex);
             // The manual value is only written when auto is off, so auto mode never overwrites it.
@@ -373,10 +350,11 @@ namespace RandySDR
             _numStart.Value = (decimal)p.Start;
             _numStop.Value = (decimal)p.Stop;
             _numStep.Value = (decimal)p.Step;
-            if (i == CbPresetIndex)
+            if (i == CbPresetIndex || IsLawEnforcementPreset(i))
             {
                 _chkAutoMode.Checked = true;
-                rdoDemodAm.Checked = true;
+                if (i == CbPresetIndex) rdoDemodAm.Checked = true;
+                else rdoDemodNarrowFm.Checked = true;
             }
             _loadingScanUi = false;
             ReadScanSettingsFromUi();
@@ -570,7 +548,8 @@ namespace RandySDR
 
             _cardRange.Enabled = true;
             foreach (var c in new[] { _cardRange, _cardDetect, _cardBehave, _cardControl })
-                foreach (Control child in c.Controls) child.Enabled = c.Active;
+                foreach (Control child in c.Controls)
+                    if (child is not DashboardResizeHandle) child.Enabled = c.Active;
         }
 
         private void LockOutCurrent()
@@ -616,7 +595,7 @@ namespace RandySDR
 
         private void SelectModeForBand(double mhz)
         {
-            RadioButton? target = mhz switch
+            RadioButton? target = IsLawEnforcementPreset(_cmbPreset.SelectedIndex) ? rdoDemodNarrowFm : mhz switch
             {
                 >= 87.5 and <= 108 => rdoDemodWideFm,          // FM broadcast - use Wide FM for best audio quality
                 > 108 and <= 137 => rdoDemodAm,                  // Airband - AM mode for ATC communications
@@ -627,5 +606,8 @@ namespace RandySDR
             };
             if (target != null) target.Checked = true;
         }
+
+        private static bool IsLawEnforcementPreset(int index) =>
+            index == LawEnforcementVhfPresetIndex || index == LawEnforcementUhfPresetIndex;
     }
 }

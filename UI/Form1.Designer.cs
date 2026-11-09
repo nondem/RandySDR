@@ -889,7 +889,7 @@
             // 
             AutoScaleDimensions = new SizeF(144F, 144F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(2100, 1300);
+            ClientSize = new Size(1200, 800);
             StartPosition = FormStartPosition.CenterScreen;
             Controls.Add(lblStatus);
             Controls.Add(groupBox6);
@@ -902,6 +902,7 @@
             Margin = new Padding(4);
             Name = "Form1";
             Text = "RandySDR";
+            MinimumSize = new Size(400, 300);
             Load += Form1_Load;
             groupBox1.ResumeLayout(false);
             groupBox2.ResumeLayout(false);

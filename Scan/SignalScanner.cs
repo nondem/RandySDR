@@ -14,6 +14,8 @@ namespace RandySDR
         private const double HysteresisDb = 2.0;
         private const double DcOffsetHz = 300_000;
         private const double MinUsableFraction = 0.8;
+        private const double WeatherExclusionStartHz = 162_350_000;
+        private const double WeatherExclusionEndHz = 162_600_000;
         private const double MinAutoDb = 3;
         private const double MaxAutoDb = 40;
         /// <summary>Sigma multiplier for automatic threshold calculation. Higher = more robust to noise spikes, lower = more sensitive.</summary>
@@ -88,16 +90,24 @@ namespace RandySDR
         public bool Start(out string error)
         {
             error = "";
-            if (_pipeline() == null)
+            var pipeline = _pipeline();
+            if (pipeline == null)
             {
                 error = "Start streaming before scanning.";
                 return false;
             }
-            if (_s.StopMHz <= _s.StartMHz || _s.StepKHz <= 0)
+            
+            // Pre-calculate values to avoid repeated computation
+            double startMHz = _s.StartMHz;
+            double stopMHz = _s.StopMHz;
+            double stepKHz = _s.StepKHz;
+            
+            if (stopMHz <= startMHz || stepKHz <= 0)
             {
                 error = "Stop frequency must be above start, and step must be positive.";
                 return false;
             }
+            
             if (_s.UseCbChannels && (_s.StartMHz != 26.965 || _s.StopMHz != 27.405 || _s.StepKHz != 10))
             {
                 error = "The CB channel plan requires the standard range and 10 kHz nominal step. Select the CB preset again.";
@@ -148,6 +158,11 @@ namespace RandySDR
             _channelHz = _s.UseCbChannels
                 ? CbChannels.FrequenciesHz.Select(hz => (double)hz).ToArray()
                 : Enumerable.Range(0, n).Select(i => startHz + i * stepHz).ToArray();
+            if (_s.PresetName == ScanSettings.LawEnforcementVhfPresetName
+                && _s.StartMHz == 136 && _s.StopMHz == 174 && _s.StepKHz == 1.25 && !_s.UseCbChannels)
+            {
+                _channelHz = _channelHz.Where(hz => hz < WeatherExclusionStartHz || hz > WeatherExclusionEndHz).ToArray();
+            }
             n = _channelHz.Length;
             _armed = Enumerable.Repeat(true, n).ToArray();
             Strength = Enumerable.Repeat(double.NaN, n).ToArray();
@@ -167,11 +182,16 @@ namespace RandySDR
             }
 
             int idx = 0;
+            // Pre-calculate values to avoid repeated computation
+            double halfStep = stepHz / 2;
+            double usableHalf = usable / 2;
+            double stepHalf = stepHz / 2;
+            
             while (idx < n)
             {
-                double center = _channelHz[idx] - stepHz / 2 + usable / 2;
+                double center = _channelHz[idx] - halfStep + usableHalf;
                 var list = new List<int>();
-                for (int j = idx; j < n && Math.Abs(_channelHz[j] - center) <= usable / 2 - stepHz / 2 + 1; j++)
+                for (int j = idx; j < n && Math.Abs(_channelHz[j] - center) <= usableHalf - stepHalf + 1; j++)
                     list.Add(j);
                 if (list.Count == 0) list.Add(idx);
                 _hops.Add(new Hop(center, list.ToArray()));
@@ -220,6 +240,7 @@ namespace RandySDR
                     }
                     break;
                 case Phase.Locked:
+                    // Only measure locked signals if there are new buffers to process
                     if (p.BuffersProcessed != _lastSeenBuffers)
                     {
                         _lastSeenBuffers = p.BuffersProcessed;
@@ -251,15 +272,24 @@ namespace RandySDR
 
             int best = -1;
             double bestDb = double.NegativeInfinity;
-            foreach (int ch in hop.Channels)
+            
+            // Optimize: pre-calculate values that are used multiple times
+            var hopChannels = hop.Channels;
+            var channelHz = _channelHz;
+            var armed = _armed;
+            var lockouts = _s.LockoutsMHz;
+            var useCbChannels = _s.UseCbChannels;
+            
+            for (int i = 0; i < hopChannels.Length; i++)
             {
-                double db = HopMeasurement.ToDb(_meas.ChannelPower(_channelHz[ch] - hop.CenterHz, widthHz)) - floor;
+                int ch = hopChannels[i];
+                double db = HopMeasurement.ToDb(_meas.ChannelPower(channelHz[ch] - hop.CenterHz, widthHz)) - floor;
                 Strength[ch] = db;
 
                 if (db < threshold - HysteresisDb)
-                    _armed[ch] = true;
+                    armed[ch] = true;
 
-                if (db >= threshold && _armed[ch] && !IsLockedOut(_channelHz[ch]) && db > bestDb)
+                if (db >= threshold && armed[ch] && !IsLockedOut(channelHz[ch]) && db > bestDb)
                 {
                     best = ch;
                     bestDb = db;
@@ -292,9 +322,13 @@ namespace RandySDR
             double prev = _hopThresholdDb[_hopIndex];
             _hopThresholdDb[_hopIndex] = double.IsNaN(prev) ? t : prev + AutoSmoothing * (t - prev);
 
-            var known = _hopThresholdDb.Where(v => !double.IsNaN(v)).OrderBy(v => v).ToArray();
+            // Only recalculate the auto threshold if we have enough data points
+            var known = _hopThresholdDb.Where(v => !double.IsNaN(v)).ToArray();
             if (known.Length > 0)
+            {
+                Array.Sort(known);
                 _autoThresholdDb = known[known.Length / 2];
+            }
         }
 
         private void Lock(int ch, double db)
@@ -325,10 +359,14 @@ namespace RandySDR
             if (db >= EffectiveThresholdDb - HysteresisDb)
                 _lastPresentMs = now;
 
-            bool release = _s.Hold switch
+            // Pre-calculate hold mode values to avoid repeated computation
+            var holdMode = _s.Hold;
+            double holdSeconds = _s.HoldSeconds;
+            
+            bool release = holdMode switch
             {
-                HoldMode.UntilSignalDrops => now - _lastPresentMs >= _s.HoldSeconds * 1000,
-                HoldMode.FixedTime => now - _lockStartMs >= _s.HoldSeconds * 1000,
+                HoldMode.UntilSignalDrops => now - _lastPresentMs >= holdSeconds * 1000,
+                HoldMode.FixedTime => now - _lockStartMs >= holdSeconds * 1000,
                 _ => false
             };
 
@@ -338,9 +376,22 @@ namespace RandySDR
 
         private bool IsLockedOut(double hz)
         {
+            // Pre-calculate the tolerance to avoid repeated computation
             double tol = Math.Max(_usedStep[0] / 2, 5_000);
-            foreach (double mhz in _s.LockoutsMHz)
-                if (Math.Abs(mhz * 1e6 - hz) < tol) return true;
+            
+            // Use a more efficient search for lockouts - cache the lockouts array
+            var lockouts = _s.LockoutsMHz;
+            int count = lockouts.Count;
+            
+            // Early exit if no lockouts
+            if (count == 0) return false;
+            
+            // Use direct indexing instead of foreach for better performance
+            for (int i = 0; i < count; i++)
+            {
+                if (Math.Abs(lockouts[i] * 1e6 - hz) < tol) 
+                    return true;
+            }
             return false;
         }
     }

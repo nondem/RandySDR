@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Tests\**\*.cs" />
     <None Include=".github\copilot-instructions.md" />
   </ItemGroup>
 
