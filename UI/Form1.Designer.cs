@@ -33,6 +33,8 @@
             cmbDevices = new ComboBox();
             btnOpen = new Button();
             btnClose = new Button();
+            btnStart = new Button();
+            btnStop = new Button();
             groupBox2 = new CardGroupBox();
             label1 = new Label();
             numFrequency = new FrequencySelector();
@@ -54,6 +56,13 @@
             chkRtlAGC = new CheckBox();
             groupBox3 = new CardGroupBox();
             lblTunerGain = new Label();
+            trackTunerGain = new TrackBar();
+            lblClip = new Label();
+            lblRxBandwidth = new Label();
+            trackRxBandwidth = new TrackBar();
+            rdoQuadrature = new RadioButton();
+            rdoDirectSamplingI = new RadioButton();
+            rdoDirectSamplingQ = new RadioButton();
             chkSpecAuto = new CheckBox();
             lblSpecZoom = new Label();
             trackSpecZoom = new TrackBar();
@@ -61,11 +70,8 @@
             trackSpecRange = new TrackBar();
             lblSpecRef = new Label();
             trackSpecRef = new TrackBar();
-            lblClip = new Label();
-            trackTunerGain = new TrackBar();
             chkDeEmphasis = new CheckBox();
             groupBox4 = new CardGroupBox();
-            groupBoxAudio = new CardGroupBox();
             rdoDemodCw = new RadioButton();
             rdoDemodRaw = new RadioButton();
             rdoDemodLsb = new RadioButton();
@@ -74,21 +80,15 @@
             rdoDemodWideFm = new RadioButton();
             rdoDemodAm = new RadioButton();
             lblFreqOffset = new Label();
-            lblSignalStrength = new Label();
+            groupBoxAudio = new CardGroupBox();
             lblVolume = new Label();
             trackVolume = new TrackBar();
             lblSquelch = new Label();
             trackSquelch = new TrackBar();
+            lblSignalStrength = new Label();
             groupBox6 = new CardGroupBox();
             chkSpectrumEnabled = new CheckBox();
-            lblRxBandwidth = new Label();
-            trackRxBandwidth = new TrackBar();
             picSpectrum = new SpectrumDisplay();
-            rdoDirectSamplingQ = new RadioButton();
-            rdoDirectSamplingI = new RadioButton();
-            rdoQuadrature = new RadioButton();
-            btnStart = new Button();
-            btnStop = new Button();
             lblStatus = new Label();
             timerSignalLevel = new System.Windows.Forms.Timer(components);
             chkSwapIQ = new CheckBox();
@@ -101,6 +101,7 @@
             ((System.ComponentModel.ISupportInitialize)numTunerBandwidth).BeginInit();
             groupBox3.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)trackTunerGain).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)trackRxBandwidth).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackSpecZoom).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackSpecRange).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackSpecRef).BeginInit();
@@ -109,17 +110,17 @@
             ((System.ComponentModel.ISupportInitialize)trackVolume).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackSquelch).BeginInit();
             groupBox6.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)trackRxBandwidth).BeginInit();
-            
             SuspendLayout();
             // 
             // groupBox1
             // 
+            groupBox1.BackColor = Color.FromArgb(34, 42, 58);
             groupBox1.Controls.Add(cmbDevices);
             groupBox1.Controls.Add(btnOpen);
             groupBox1.Controls.Add(btnClose);
             groupBox1.Controls.Add(btnStart);
             groupBox1.Controls.Add(btnStop);
+            groupBox1.Font = new Font("Segoe UI Semibold", 9.5F);
             groupBox1.Location = new Point(12, 10);
             groupBox1.Margin = new Padding(4);
             groupBox1.Name = "groupBox1";
@@ -136,7 +137,7 @@
             cmbDevices.Location = new Point(19, 27);
             cmbDevices.Margin = new Padding(4);
             cmbDevices.Name = "cmbDevices";
-            cmbDevices.Size = new Size(500, 31);
+            cmbDevices.Size = new Size(500, 33);
             cmbDevices.TabIndex = 0;
             // 
             // btnOpen
@@ -161,10 +162,34 @@
             btnClose.UseVisualStyleBackColor = true;
             btnClose.Click += btnClose_Click;
             // 
+            // btnStart
+            // 
+            btnStart.Location = new Point(760, 24);
+            btnStart.Margin = new Padding(4);
+            btnStart.Name = "btnStart";
+            btnStart.Size = new Size(100, 36);
+            btnStart.TabIndex = 13;
+            btnStart.Text = "Start";
+            btnStart.UseVisualStyleBackColor = true;
+            btnStart.Click += btnStart_Click;
+            // 
+            // btnStop
+            // 
+            btnStop.Location = new Point(868, 24);
+            btnStop.Margin = new Padding(4);
+            btnStop.Name = "btnStop";
+            btnStop.Size = new Size(100, 36);
+            btnStop.TabIndex = 14;
+            btnStop.Text = "Stop";
+            btnStop.UseVisualStyleBackColor = true;
+            btnStop.Click += btnStop_Click;
+            // 
             // groupBox2
             // 
+            groupBox2.BackColor = Color.FromArgb(34, 42, 58);
             groupBox2.Controls.Add(label1);
             groupBox2.Controls.Add(numFrequency);
+            groupBox2.Font = new Font("Segoe UI Semibold", 9.5F);
             groupBox2.Location = new Point(12, 86);
             groupBox2.Margin = new Padding(4);
             groupBox2.Name = "groupBox2";
@@ -180,20 +205,19 @@
             label1.Location = new Point(19, 67);
             label1.Margin = new Padding(4, 0, 4, 0);
             label1.Name = "label1";
-            label1.Size = new Size(142, 23);
+            label1.Size = new Size(58, 25);
             label1.TabIndex = 0;
-            label1.Text = "Frequency (MHz):";
+            label1.Text = "MHz:";
             // 
             // numFrequency
             // 
-            numFrequency.BackColor = SystemColors.Control;
+            numFrequency.BackColor = CardGroupBox.ActiveCardColor;
             numFrequency.Location = new Point(190, 9);
             numFrequency.Margin = new Padding(4);
-            numFrequency.MinimumSize = new Size(620, 102);
             numFrequency.Name = "numFrequency";
-            numFrequency.Size = new Size(766, 134);
             numFrequency.TabIndex = 1;
             numFrequency.ValueChanged += numFrequency_ValueChanged;
+            numFrequency.Load += numFrequency_Load;
             // 
             // numSampleRate
             // 
@@ -215,9 +239,9 @@
             label2.Location = new Point(35, 422);
             label2.Margin = new Padding(4, 0, 4, 0);
             label2.Name = "label2";
-            label2.Size = new Size(176, 25);
+            label2.Size = new Size(117, 25);
             label2.TabIndex = 2;
-            label2.Text = "Sample Rate (MSPS):";
+            label2.Text = "Sample Rate:";
             // 
             // numPpm
             // 
@@ -248,7 +272,7 @@
             labelBandwidth.Name = "labelBandwidth";
             labelBandwidth.Size = new Size(137, 25);
             labelBandwidth.TabIndex = 6;
-            labelBandwidth.Text = "Tuner BW (kHz):";
+            labelBandwidth.Text = "Tuner BW:";
             // 
             // numTunerBandwidth
             // 
@@ -306,7 +330,6 @@
             btnPpmPlus50.UseVisualStyleBackColor = true;
             btnPpmPlus50.Click += btnPpmPlus50_Click;
             // 
-            // 
             // btnScan
             // 
             btnScan.Location = new Point(148, 503);
@@ -336,7 +359,7 @@
             chkOffsetTuning.Location = new Point(150, 70);
             chkOffsetTuning.Margin = new Padding(4);
             chkOffsetTuning.Name = "chkOffsetTuning";
-            chkOffsetTuning.Size = new Size(139, 27);
+            chkOffsetTuning.Size = new Size(154, 29);
             chkOffsetTuning.TabIndex = 4;
             chkOffsetTuning.Text = "Offset Tuning";
             chkOffsetTuning.UseVisualStyleBackColor = true;
@@ -346,12 +369,12 @@
             // 
             lblFreqDisplay.AutoSize = true;
             lblFreqDisplay.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            lblFreqDisplay.Location = new Point(19, 100);
+            lblFreqDisplay.Location = new Point(19, 45);
             lblFreqDisplay.Margin = new Padding(4, 0, 4, 0);
             lblFreqDisplay.Name = "lblFreqDisplay";
             lblFreqDisplay.Size = new Size(100, 25);
             lblFreqDisplay.TabIndex = 12;
-            lblFreqDisplay.Text = "98.500 MHz";
+            lblFreqDisplay.Text = "98.500";
             // 
             // chkTunerAGC
             // 
@@ -361,7 +384,7 @@
             chkTunerAGC.Location = new Point(19, 32);
             chkTunerAGC.Margin = new Padding(4);
             chkTunerAGC.Name = "chkTunerAGC";
-            chkTunerAGC.Size = new Size(119, 27);
+            chkTunerAGC.Size = new Size(129, 29);
             chkTunerAGC.TabIndex = 0;
             chkTunerAGC.Text = "Tuner AGC";
             chkTunerAGC.UseVisualStyleBackColor = true;
@@ -373,7 +396,7 @@
             chkRtlAGC.Location = new Point(19, 70);
             chkRtlAGC.Margin = new Padding(4);
             chkRtlAGC.Name = "chkRtlAGC";
-            chkRtlAGC.Size = new Size(101, 27);
+            chkRtlAGC.Size = new Size(112, 29);
             chkRtlAGC.TabIndex = 5;
             chkRtlAGC.Text = "RTL AGC";
             chkRtlAGC.UseVisualStyleBackColor = true;
@@ -381,6 +404,7 @@
             // 
             // groupBox3
             // 
+            groupBox3.BackColor = Color.FromArgb(34, 42, 58);
             groupBox3.Controls.Add(chkTunerAGC);
             groupBox3.Controls.Add(lblTunerGain);
             groupBox3.Controls.Add(trackTunerGain);
@@ -392,6 +416,7 @@
             groupBox3.Controls.Add(rdoQuadrature);
             groupBox3.Controls.Add(rdoDirectSamplingI);
             groupBox3.Controls.Add(rdoDirectSamplingQ);
+            groupBox3.Font = new Font("Segoe UI Semibold", 9.5F);
             groupBox3.Location = new Point(12, 394);
             groupBox3.Margin = new Padding(4);
             groupBox3.Name = "groupBox3";
@@ -401,23 +426,13 @@
             groupBox3.TabStop = false;
             groupBox3.Text = "Gain && Input";
             // 
-            // lblClip
-            // 
-            lblClip.AutoSize = true;
-            lblClip.ForeColor = Color.Gray;
-            lblClip.Location = new Point(330, 72);
-            lblClip.Name = "lblClip";
-            lblClip.Size = new Size(120, 23);
-            lblClip.TabIndex = 9;
-            lblClip.Text = "ADC clip: -.--%";
-            // 
             // lblTunerGain
             // 
             lblTunerGain.AutoSize = true;
             lblTunerGain.Location = new Point(590, 33);
             lblTunerGain.Margin = new Padding(4, 0, 4, 0);
             lblTunerGain.Name = "lblTunerGain";
-            lblTunerGain.Size = new Size(150, 23);
+            lblTunerGain.Size = new Size(168, 25);
             lblTunerGain.TabIndex = 2;
             lblTunerGain.Text = "Tuner Gain: 0.0 dB";
             // 
@@ -434,211 +449,78 @@
             trackTunerGain.Value = 250;
             trackTunerGain.Scroll += trackTunerGain_Scroll;
             // 
-            // chkDeEmphasis
+            // lblClip
             // 
-            chkDeEmphasis.AutoSize = true;
-            chkDeEmphasis.Location = new Point(19, 106);
-            chkDeEmphasis.Margin = new Padding(4);
-            chkDeEmphasis.Name = "chkDeEmphasis";
-            chkDeEmphasis.Size = new Size(135, 27);
-            chkDeEmphasis.TabIndex = 17;
-            chkDeEmphasis.Text = "De-emphasis";
-            chkDeEmphasis.UseVisualStyleBackColor = true;
-            chkDeEmphasis.CheckedChanged += chkDeEmphasis_CheckedChanged;
+            lblClip.AutoSize = true;
+            lblClip.ForeColor = Color.Gray;
+            lblClip.Location = new Point(330, 72);
+            lblClip.Name = "lblClip";
+            lblClip.Size = new Size(141, 25);
+            lblClip.TabIndex = 9;
+            lblClip.Text = "ADC clip: -.--%";
             // 
-            // groupBox4
+            // lblRxBandwidth
             // 
-            groupBox4.Controls.Add(rdoDemodCw);
-            groupBox4.Controls.Add(rdoDemodRaw);
-            groupBox4.Controls.Add(rdoDemodLsb);
-            groupBox4.Controls.Add(rdoDemodUsb);
-            groupBox4.Controls.Add(rdoDemodNarrowFm);
-            groupBox4.Controls.Add(rdoDemodWideFm);
-            groupBox4.Controls.Add(rdoDemodAm);
-            groupBox4.Controls.Add(lblFreqOffset);
-            groupBox4.Controls.Add(chkDeEmphasis);
-            groupBox4.Location = new Point(12, 236);
-            groupBox4.Margin = new Padding(4);
-            groupBox4.Name = "groupBox4";
-            groupBox4.Padding = new Padding(4);
-            groupBox4.Size = new Size(470, 150);
-            groupBox4.TabIndex = 2;
-            groupBox4.TabStop = false;
-            groupBox4.Text = "Demodulation Mode";
+            lblRxBandwidth.AutoSize = true;
+            lblRxBandwidth.ForeColor = Color.White;
+            lblRxBandwidth.Location = new Point(560, 72);
+            lblRxBandwidth.Margin = new Padding(4, 0, 4, 0);
+            lblRxBandwidth.Name = "lblRxBandwidth";
+            lblRxBandwidth.Size = new Size(151, 25);
+            lblRxBandwidth.TabIndex = 2;
+            lblRxBandwidth.Text = "RX BW: 200 kHz";
             // 
-            // rdoDemodCw
+            // trackRxBandwidth
             // 
-            rdoDemodCw.AutoSize = true;
-            rdoDemodCw.Location = new Point(180, 68);
-            rdoDemodCw.Margin = new Padding(4);
-            rdoDemodCw.Name = "rdoDemodCw";
-            rdoDemodCw.Size = new Size(62, 27);
-            rdoDemodCw.TabIndex = 13;
-            rdoDemodCw.Text = "CW";
-            rdoDemodCw.UseVisualStyleBackColor = true;
-            rdoDemodCw.CheckedChanged += rdoDemodMode_CheckedChanged;
+            trackRxBandwidth.AutoSize = false;
+            trackRxBandwidth.Location = new Point(690, 62);
+            trackRxBandwidth.Margin = new Padding(4);
+            trackRxBandwidth.Maximum = 200;
+            trackRxBandwidth.Minimum = 1;
+            trackRxBandwidth.Name = "trackRxBandwidth";
+            trackRxBandwidth.Size = new Size(270, 40);
+            trackRxBandwidth.TabIndex = 3;
+            trackRxBandwidth.TickFrequency = 10;
+            trackRxBandwidth.Value = 200;
+            trackRxBandwidth.Scroll += trackRxBandwidth_Scroll;
             // 
-            // rdoDemodRaw
+            // rdoQuadrature
             // 
-            rdoDemodRaw.AutoSize = true;
-            rdoDemodRaw.Location = new Point(255, 68);
-            rdoDemodRaw.Margin = new Padding(4);
-            rdoDemodRaw.Name = "rdoDemodRaw";
-            rdoDemodRaw.Size = new Size(71, 27);
-            rdoDemodRaw.TabIndex = 12;
-            rdoDemodRaw.Text = "RAW";
-            rdoDemodRaw.UseVisualStyleBackColor = true;
-            rdoDemodRaw.CheckedChanged += rdoDemodMode_CheckedChanged;
+            rdoQuadrature.AutoSize = true;
+            rdoQuadrature.Checked = true;
+            rdoQuadrature.Location = new Point(19, 108);
+            rdoQuadrature.Margin = new Padding(4);
+            rdoQuadrature.Name = "rdoQuadrature";
+            rdoQuadrature.Size = new Size(135, 29);
+            rdoQuadrature.TabIndex = 2;
+            rdoQuadrature.TabStop = true;
+            rdoQuadrature.Text = "Quadrature";
+            rdoQuadrature.UseVisualStyleBackColor = true;
+            rdoQuadrature.CheckedChanged += rdoSamplingMode_CheckedChanged;
             // 
-            // rdoDemodLsb
+            // rdoDirectSamplingI
             // 
-            rdoDemodLsb.AutoSize = true;
-            rdoDemodLsb.Location = new Point(100, 68);
-            rdoDemodLsb.Margin = new Padding(4);
-            rdoDemodLsb.Name = "rdoDemodLsb";
-            rdoDemodLsb.Size = new Size(62, 27);
-            rdoDemodLsb.TabIndex = 11;
-            rdoDemodLsb.Text = "LSB";
-            rdoDemodLsb.UseVisualStyleBackColor = true;
-            rdoDemodLsb.CheckedChanged += rdoDemodMode_CheckedChanged;
+            rdoDirectSamplingI.AutoSize = true;
+            rdoDirectSamplingI.Location = new Point(170, 108);
+            rdoDirectSamplingI.Margin = new Padding(4);
+            rdoDirectSamplingI.Name = "rdoDirectSamplingI";
+            rdoDirectSamplingI.Size = new Size(185, 29);
+            rdoDirectSamplingI.TabIndex = 3;
+            rdoDirectSamplingI.Text = "Direct Sampling I";
+            rdoDirectSamplingI.UseVisualStyleBackColor = true;
+            rdoDirectSamplingI.CheckedChanged += rdoSamplingMode_CheckedChanged;
             // 
-            // rdoDemodUsb
+            // rdoDirectSamplingQ
             // 
-            rdoDemodUsb.AutoSize = true;
-            rdoDemodUsb.Location = new Point(19, 68);
-            rdoDemodUsb.Margin = new Padding(4);
-            rdoDemodUsb.Name = "rdoDemodUsb";
-            rdoDemodUsb.Size = new Size(66, 27);
-            rdoDemodUsb.TabIndex = 10;
-            rdoDemodUsb.Text = "USB";
-            rdoDemodUsb.UseVisualStyleBackColor = true;
-            rdoDemodUsb.CheckedChanged += rdoDemodMode_CheckedChanged;
-            // 
-            // rdoDemodNarrowFm
-            // 
-            rdoDemodNarrowFm.AutoSize = true;
-            rdoDemodNarrowFm.Location = new Point(140, 32);
-            rdoDemodNarrowFm.Margin = new Padding(4);
-            rdoDemodNarrowFm.Name = "rdoDemodNarrowFm";
-            rdoDemodNarrowFm.Size = new Size(119, 27);
-            rdoDemodNarrowFm.TabIndex = 9;
-            rdoDemodNarrowFm.Text = "Narrow FM";
-            rdoDemodNarrowFm.UseVisualStyleBackColor = true;
-            rdoDemodNarrowFm.CheckedChanged += rdoDemodMode_CheckedChanged;
-            // 
-            // rdoDemodWideFm
-            // 
-            rdoDemodWideFm.AutoSize = true;
-            rdoDemodWideFm.Checked = true;
-            rdoDemodWideFm.Location = new Point(19, 32);
-            rdoDemodWideFm.Margin = new Padding(4);
-            rdoDemodWideFm.Name = "rdoDemodWideFm";
-            rdoDemodWideFm.Size = new Size(102, 27);
-            rdoDemodWideFm.TabIndex = 8;
-            rdoDemodWideFm.TabStop = true;
-            rdoDemodWideFm.Text = "Wide FM";
-            rdoDemodWideFm.UseVisualStyleBackColor = true;
-            rdoDemodWideFm.CheckedChanged += rdoDemodMode_CheckedChanged;
-            // 
-            // rdoDemodAm
-            // 
-            rdoDemodAm.AutoSize = true;
-            rdoDemodAm.Location = new Point(295, 32);
-            rdoDemodAm.Margin = new Padding(4);
-            rdoDemodAm.Name = "rdoDemodAm";
-            rdoDemodAm.Size = new Size(61, 27);
-            rdoDemodAm.TabIndex = 15;
-            rdoDemodAm.Text = "AM";
-            rdoDemodAm.UseVisualStyleBackColor = true;
-            rdoDemodAm.CheckedChanged += rdoDemodMode_CheckedChanged;
-            // 
-            // lblFreqOffset
-            // 
-            lblFreqOffset.AutoSize = true;
-            lblFreqOffset.Font = new Font("Consolas", 9F);
-            lblFreqOffset.ForeColor = Color.DarkBlue;
-            lblFreqOffset.Location = new Point(200, 108);
-            lblFreqOffset.Margin = new Padding(4, 0, 4, 0);
-            lblFreqOffset.Name = "lblFreqOffset";
-            lblFreqOffset.Size = new Size(180, 22);
-            lblFreqOffset.TabIndex = 14;
-            lblFreqOffset.Text = "Offset: -.--- kHz";
-            // 
-            // lblSignalStrength
-            // 
-            lblSignalStrength.AutoSize = true;
-            lblSignalStrength.Location = new Point(15, 112);
-            lblSignalStrength.Margin = new Padding(4, 0, 4, 0);
-            lblSignalStrength.Name = "lblSignalStrength";
-            lblSignalStrength.Size = new Size(60, 23);
-            lblSignalStrength.TabIndex = 15;
-            lblSignalStrength.Text = "Signal:";
-            // 
-            // lblVolume
-            // 
-            lblVolume.AutoSize = true;
-            lblVolume.Location = new Point(15, 34);
-            lblVolume.Margin = new Padding(4, 0, 4, 0);
-            lblVolume.Name = "lblVolume";
-            lblVolume.Size = new Size(109, 23);
-            lblVolume.TabIndex = 18;
-            lblVolume.Text = "Volume: 5%";
-            // 
-            // trackVolume
-            // 
-            trackVolume.AutoSize = false;
-            trackVolume.Location = new Point(140, 26);
-            trackVolume.Margin = new Padding(4);
-            trackVolume.Maximum = 100;
-            trackVolume.Name = "trackVolume";
-            trackVolume.Size = new Size(335, 40);
-            trackVolume.TabIndex = 19;
-            trackVolume.TickFrequency = 10;
-            trackVolume.Value = 5;
-            trackVolume.Scroll += trackVolume_Scroll;
-            // 
-            // lblSquelch
-            // 
-            lblSquelch.AutoSize = true;
-            lblSquelch.Location = new Point(15, 74);
-            lblSquelch.Margin = new Padding(4, 0, 4, 0);
-            lblSquelch.Name = "lblSquelch";
-            lblSquelch.Size = new Size(102, 23);
-            lblSquelch.TabIndex = 20;
-            lblSquelch.Text = "Squelch: 0%";
-            // 
-            // trackSquelch
-            // 
-            trackSquelch.AutoSize = false;
-            trackSquelch.Location = new Point(140, 66);
-            trackSquelch.Margin = new Padding(4);
-            trackSquelch.Maximum = 100;
-            trackSquelch.Name = "trackSquelch";
-            trackSquelch.Size = new Size(335, 40);
-            trackSquelch.TabIndex = 21;
-            trackSquelch.TickFrequency = 10;
-            trackSquelch.Scroll += trackSquelch_Scroll;
-            // 
-            // groupBox6
-            // 
-            groupBox6.Controls.Add(chkSpectrumEnabled);
-            groupBox6.Controls.Add(chkSpecAuto);
-            groupBox6.Controls.Add(lblSpecZoom);
-            groupBox6.Controls.Add(trackSpecZoom);
-            groupBox6.Controls.Add(lblSpecRange);
-            groupBox6.Controls.Add(trackSpecRange);
-            groupBox6.Controls.Add(lblSpecRef);
-            groupBox6.Controls.Add(trackSpecRef);
-            groupBox6.Controls.Add(picSpectrum);
-            groupBox6.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            groupBox6.Location = new Point(12, 550);
-            groupBox6.Margin = new Padding(4);
-            groupBox6.Name = "groupBox6";
-            groupBox6.Padding = new Padding(4);
-            groupBox6.Size = new Size(976, 405);
-            groupBox6.TabIndex = 5;
-            groupBox6.TabStop = false;
-            groupBox6.Text = "Spectrum";
+            rdoDirectSamplingQ.AutoSize = true;
+            rdoDirectSamplingQ.Location = new Point(345, 108);
+            rdoDirectSamplingQ.Margin = new Padding(4);
+            rdoDirectSamplingQ.Name = "rdoDirectSamplingQ";
+            rdoDirectSamplingQ.Size = new Size(193, 29);
+            rdoDirectSamplingQ.TabIndex = 4;
+            rdoDirectSamplingQ.Text = "Direct Sampling Q";
+            rdoDirectSamplingQ.UseVisualStyleBackColor = true;
+            rdoDirectSamplingQ.CheckedChanged += rdoSamplingMode_CheckedChanged;
             // 
             // chkSpecAuto
             // 
@@ -647,7 +529,7 @@
             chkSpecAuto.CheckState = CheckState.Checked;
             chkSpecAuto.Location = new Point(210, 30);
             chkSpecAuto.Name = "chkSpecAuto";
-            chkSpecAuto.Size = new Size(130, 27);
+            chkSpecAuto.Size = new Size(134, 29);
             chkSpecAuto.TabIndex = 6;
             chkSpecAuto.Text = "Auto range";
             chkSpecAuto.UseVisualStyleBackColor = true;
@@ -658,7 +540,8 @@
             lblSpecZoom.AutoSize = true;
             lblSpecZoom.Location = new Point(19, 80);
             lblSpecZoom.Name = "lblSpecZoom";
-            lblSpecZoom.Size = new Size(90, 23);
+            lblSpecZoom.Size = new Size(106, 25);
+            lblSpecZoom.TabIndex = 7;
             lblSpecZoom.Text = "Zoom: 1.0x";
             // 
             // trackSpecZoom
@@ -677,14 +560,15 @@
             lblSpecRange.AutoSize = true;
             lblSpecRange.Location = new Point(330, 80);
             lblSpecRange.Name = "lblSpecRange";
-            lblSpecRange.Size = new Size(100, 23);
+            lblSpecRange.Size = new Size(125, 25);
+            lblSpecRange.TabIndex = 8;
             lblSpecRange.Text = "Range: 80 dB";
             // 
             // trackSpecRange
             // 
             trackSpecRange.AutoSize = false;
-            trackSpecRange.Location = new Point(445, 72);
             trackSpecRange.Enabled = false;
+            trackSpecRange.Location = new Point(445, 72);
             trackSpecRange.Maximum = 120;
             trackSpecRange.Minimum = 20;
             trackSpecRange.Name = "trackSpecRange";
@@ -699,14 +583,15 @@
             lblSpecRef.AutoSize = true;
             lblSpecRef.Location = new Point(635, 80);
             lblSpecRef.Name = "lblSpecRef";
-            lblSpecRef.Size = new Size(100, 23);
+            lblSpecRef.Size = new Size(108, 25);
+            lblSpecRef.TabIndex = 9;
             lblSpecRef.Text = "Ref: -20 dB";
             // 
             // trackSpecRef
             // 
             trackSpecRef.AutoSize = false;
-            trackSpecRef.Location = new Point(740, 72);
             trackSpecRef.Enabled = false;
+            trackSpecRef.Location = new Point(740, 72);
             trackSpecRef.Maximum = 0;
             trackSpecRef.Minimum = -100;
             trackSpecRef.Name = "trackSpecRef";
@@ -716,118 +601,273 @@
             trackSpecRef.Value = -20;
             trackSpecRef.Scroll += trackSpecRef_Scroll;
             // 
+            // chkDeEmphasis
+            // 
+            chkDeEmphasis.AutoSize = true;
+            chkDeEmphasis.Location = new Point(19, 106);
+            chkDeEmphasis.Margin = new Padding(4);
+            chkDeEmphasis.Name = "chkDeEmphasis";
+            chkDeEmphasis.Size = new Size(150, 29);
+            chkDeEmphasis.TabIndex = 17;
+            chkDeEmphasis.Text = "De-emphasis";
+            chkDeEmphasis.UseVisualStyleBackColor = true;
+            chkDeEmphasis.CheckedChanged += chkDeEmphasis_CheckedChanged;
+            // 
+            // groupBox4
+            // 
+            groupBox4.BackColor = Color.FromArgb(34, 42, 58);
+            groupBox4.Controls.Add(rdoDemodCw);
+            groupBox4.Controls.Add(rdoDemodRaw);
+            groupBox4.Controls.Add(rdoDemodLsb);
+            groupBox4.Controls.Add(rdoDemodUsb);
+            groupBox4.Controls.Add(rdoDemodNarrowFm);
+            groupBox4.Controls.Add(rdoDemodWideFm);
+            groupBox4.Controls.Add(rdoDemodAm);
+            groupBox4.Controls.Add(lblFreqOffset);
+            groupBox4.Controls.Add(chkDeEmphasis);
+            groupBox4.Font = new Font("Segoe UI Semibold", 9.5F);
+            groupBox4.Location = new Point(12, 236);
+            groupBox4.Margin = new Padding(4);
+            groupBox4.Name = "groupBox4";
+            groupBox4.Padding = new Padding(4);
+            groupBox4.Size = new Size(470, 150);
+            groupBox4.TabIndex = 2;
+            groupBox4.TabStop = false;
+            groupBox4.Text = "Demodulation Mode";
+            // 
+            // rdoDemodCw
+            // 
+            rdoDemodCw.AutoSize = true;
+            rdoDemodCw.Location = new Point(180, 68);
+            rdoDemodCw.Margin = new Padding(4);
+            rdoDemodCw.Name = "rdoDemodCw";
+            rdoDemodCw.Size = new Size(67, 29);
+            rdoDemodCw.TabIndex = 13;
+            rdoDemodCw.Text = "CW";
+            rdoDemodCw.UseVisualStyleBackColor = true;
+            rdoDemodCw.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // rdoDemodRaw
+            // 
+            rdoDemodRaw.AutoSize = true;
+            rdoDemodRaw.Location = new Point(255, 68);
+            rdoDemodRaw.Margin = new Padding(4);
+            rdoDemodRaw.Name = "rdoDemodRaw";
+            rdoDemodRaw.Size = new Size(79, 29);
+            rdoDemodRaw.TabIndex = 12;
+            rdoDemodRaw.Text = "RAW";
+            rdoDemodRaw.UseVisualStyleBackColor = true;
+            rdoDemodRaw.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // rdoDemodLsb
+            // 
+            rdoDemodLsb.AutoSize = true;
+            rdoDemodLsb.Location = new Point(100, 68);
+            rdoDemodLsb.Margin = new Padding(4);
+            rdoDemodLsb.Name = "rdoDemodLsb";
+            rdoDemodLsb.Size = new Size(67, 29);
+            rdoDemodLsb.TabIndex = 11;
+            rdoDemodLsb.Text = "LSB";
+            rdoDemodLsb.UseVisualStyleBackColor = true;
+            rdoDemodLsb.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // rdoDemodUsb
+            // 
+            rdoDemodUsb.AutoSize = true;
+            rdoDemodUsb.Location = new Point(19, 68);
+            rdoDemodUsb.Margin = new Padding(4);
+            rdoDemodUsb.Name = "rdoDemodUsb";
+            rdoDemodUsb.Size = new Size(71, 29);
+            rdoDemodUsb.TabIndex = 10;
+            rdoDemodUsb.Text = "USB";
+            rdoDemodUsb.UseVisualStyleBackColor = true;
+            rdoDemodUsb.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // rdoDemodNarrowFm
+            // 
+            rdoDemodNarrowFm.AutoSize = true;
+            rdoDemodNarrowFm.Location = new Point(140, 32);
+            rdoDemodNarrowFm.Margin = new Padding(4);
+            rdoDemodNarrowFm.Name = "rdoDemodNarrowFm";
+            rdoDemodNarrowFm.Size = new Size(134, 29);
+            rdoDemodNarrowFm.TabIndex = 9;
+            rdoDemodNarrowFm.Text = "Narrow FM";
+            rdoDemodNarrowFm.UseVisualStyleBackColor = true;
+            rdoDemodNarrowFm.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // rdoDemodWideFm
+            // 
+            rdoDemodWideFm.AutoSize = true;
+            rdoDemodWideFm.Checked = true;
+            rdoDemodWideFm.Location = new Point(19, 32);
+            rdoDemodWideFm.Margin = new Padding(4);
+            rdoDemodWideFm.Name = "rdoDemodWideFm";
+            rdoDemodWideFm.Size = new Size(114, 29);
+            rdoDemodWideFm.TabIndex = 8;
+            rdoDemodWideFm.TabStop = true;
+            rdoDemodWideFm.Text = "Wide FM";
+            rdoDemodWideFm.UseVisualStyleBackColor = true;
+            rdoDemodWideFm.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // rdoDemodAm
+            // 
+            rdoDemodAm.AutoSize = true;
+            rdoDemodAm.Location = new Point(295, 32);
+            rdoDemodAm.Margin = new Padding(4);
+            rdoDemodAm.Name = "rdoDemodAm";
+            rdoDemodAm.Size = new Size(68, 29);
+            rdoDemodAm.TabIndex = 15;
+            rdoDemodAm.Text = "AM";
+            rdoDemodAm.UseVisualStyleBackColor = true;
+            rdoDemodAm.CheckedChanged += rdoDemodMode_CheckedChanged;
+            // 
+            // lblFreqOffset
+            // 
+            lblFreqOffset.AutoSize = true;
+            lblFreqOffset.Font = new Font("Consolas", 9F);
+            lblFreqOffset.ForeColor = Color.DarkBlue;
+            lblFreqOffset.Location = new Point(200, 108);
+            lblFreqOffset.Margin = new Padding(4, 0, 4, 0);
+            lblFreqOffset.Name = "lblFreqOffset";
+            lblFreqOffset.Size = new Size(180, 22);
+            lblFreqOffset.TabIndex = 14;
+            lblFreqOffset.Text = "Offset: -.--- kHz";
+            // 
+            // groupBoxAudio
+            // 
+            groupBoxAudio.BackColor = Color.FromArgb(34, 42, 58);
+            groupBoxAudio.Controls.Add(lblVolume);
+            groupBoxAudio.Controls.Add(trackVolume);
+            groupBoxAudio.Controls.Add(lblSquelch);
+            groupBoxAudio.Controls.Add(trackSquelch);
+            groupBoxAudio.Controls.Add(lblSignalStrength);
+            groupBoxAudio.Controls.Add(progressSignal);
+            groupBoxAudio.Font = new Font("Segoe UI Semibold", 9.5F);
+            groupBoxAudio.Location = new Point(494, 236);
+            groupBoxAudio.Name = "groupBoxAudio";
+            groupBoxAudio.Size = new Size(494, 150);
+            groupBoxAudio.TabIndex = 3;
+            groupBoxAudio.TabStop = false;
+            groupBoxAudio.Text = "Audio && Signal";
+            // 
+            // lblVolume
+            // 
+            lblVolume.AutoSize = true;
+            lblVolume.Location = new Point(15, 34);
+            lblVolume.Margin = new Padding(4, 0, 4, 0);
+            lblVolume.Name = "lblVolume";
+            lblVolume.Size = new Size(111, 25);
+            lblVolume.TabIndex = 18;
+            lblVolume.Text = "Volume: 1%";
+            // 
+            // trackVolume
+            // 
+            trackVolume.AutoSize = false;
+            trackVolume.Location = new Point(140, 26);
+            trackVolume.Margin = new Padding(4);
+            trackVolume.Maximum = 100;
+            trackVolume.Name = "trackVolume";
+            trackVolume.Size = new Size(335, 40);
+            trackVolume.TabIndex = 19;
+            trackVolume.TickFrequency = 10;
+            trackVolume.Value = 1;
+            trackVolume.Scroll += trackVolume_Scroll;
+            // 
+            // lblSquelch
+            // 
+            lblSquelch.AutoSize = true;
+            lblSquelch.Location = new Point(15, 74);
+            lblSquelch.Margin = new Padding(4, 0, 4, 0);
+            lblSquelch.Name = "lblSquelch";
+            lblSquelch.Size = new Size(116, 25);
+            lblSquelch.TabIndex = 20;
+            lblSquelch.Text = "Squelch: 0%";
+            // 
+            // trackSquelch
+            // 
+            trackSquelch.AutoSize = false;
+            trackSquelch.Location = new Point(140, 66);
+            trackSquelch.Margin = new Padding(4);
+            trackSquelch.Maximum = 100;
+            trackSquelch.Name = "trackSquelch";
+            trackSquelch.Size = new Size(335, 40);
+            trackSquelch.TabIndex = 21;
+            trackSquelch.TickFrequency = 10;
+            trackSquelch.Scroll += trackSquelch_Scroll;
+            // 
+            // lblSignalStrength
+            // 
+            lblSignalStrength.AutoSize = true;
+            lblSignalStrength.Location = new Point(15, 112);
+            lblSignalStrength.Margin = new Padding(4, 0, 4, 0);
+            lblSignalStrength.Name = "lblSignalStrength";
+            lblSignalStrength.Size = new Size(69, 25);
+            lblSignalStrength.TabIndex = 15;
+            lblSignalStrength.Text = "Signal:";
+            // 
+            // progressSignal
+            // 
+            progressSignal.BackColor = Color.FromArgb(34, 42, 58);
+            progressSignal.Location = new Point(140, 110);
+            progressSignal.Margin = new Padding(4);
+            progressSignal.MinimumSize = new Size(40, 16);
+            progressSignal.Name = "progressSignal";
+            progressSignal.Size = new Size(335, 24);
+            progressSignal.TabIndex = 16;
+            progressSignal.TabStop = false;
+            // 
+            // groupBox6
+            // 
+            groupBox6.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            groupBox6.BackColor = Color.FromArgb(34, 42, 58);
+            groupBox6.Controls.Add(chkSpectrumEnabled);
+            groupBox6.Controls.Add(chkSpecAuto);
+            groupBox6.Controls.Add(lblSpecZoom);
+            groupBox6.Controls.Add(trackSpecZoom);
+            groupBox6.Controls.Add(lblSpecRange);
+            groupBox6.Controls.Add(trackSpecRange);
+            groupBox6.Controls.Add(lblSpecRef);
+            groupBox6.Controls.Add(trackSpecRef);
+            groupBox6.Controls.Add(picSpectrum);
+            groupBox6.Font = new Font("Segoe UI Semibold", 9.5F);
+            groupBox6.Location = new Point(12, 550);
+            groupBox6.Margin = new Padding(4);
+            groupBox6.Name = "groupBox6";
+            groupBox6.Padding = new Padding(4);
+            groupBox6.Size = new Size(976, 405);
+            groupBox6.TabIndex = 5;
+            groupBox6.TabStop = false;
+            groupBox6.Text = "Spectrum";
+            // 
             // chkSpectrumEnabled
             // 
             chkSpectrumEnabled.AutoSize = true;
             chkSpectrumEnabled.Location = new Point(19, 30);
             chkSpectrumEnabled.Margin = new Padding(4);
             chkSpectrumEnabled.Name = "chkSpectrumEnabled";
-            chkSpectrumEnabled.Size = new Size(165, 27);
+            chkSpectrumEnabled.Size = new Size(182, 29);
             chkSpectrumEnabled.TabIndex = 0;
             chkSpectrumEnabled.Text = "Enable Spectrum";
             chkSpectrumEnabled.UseVisualStyleBackColor = true;
             chkSpectrumEnabled.CheckedChanged += chkSpectrumEnabled_CheckedChanged;
             // 
-            // lblRxBandwidth
-            // 
-            lblRxBandwidth.AutoSize = true;
-            lblRxBandwidth.ForeColor = Color.White;
-            lblRxBandwidth.Location = new Point(560, 72);
-            lblRxBandwidth.Margin = new Padding(4, 0, 4, 0);
-            lblRxBandwidth.Name = "lblRxBandwidth";
-            lblRxBandwidth.Size = new Size(130, 23);
-            lblRxBandwidth.TabIndex = 2;
-            lblRxBandwidth.Text = "RX BW: 200 kHz";
-            // 
-            // trackRxBandwidth
-            // 
-            trackRxBandwidth.AutoSize = false;
-            trackRxBandwidth.Location = new Point(690, 62);
-            trackRxBandwidth.Margin = new Padding(4);
-            trackRxBandwidth.Maximum = 200;
-            trackRxBandwidth.Minimum = 1;
-            trackRxBandwidth.Name = "trackRxBandwidth";
-            trackRxBandwidth.Size = new Size(270, 40);
-            trackRxBandwidth.TabIndex = 3;
-            trackRxBandwidth.TickFrequency = 10;
-            trackRxBandwidth.Value = 200;
-            trackRxBandwidth.Scroll += trackRxBandwidth_Scroll;
-            // 
             // picSpectrum
             // 
             picSpectrum.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             picSpectrum.BackColor = Color.Black;
+            picSpectrum.Font = new Font("Segoe UI", 8F);
+            picSpectrum.ForeColor = Color.FromArgb(170, 180, 195);
             picSpectrum.Location = new Point(19, 122);
             picSpectrum.Margin = new Padding(4);
             picSpectrum.Name = "picSpectrum";
             picSpectrum.Size = new Size(938, 270);
             picSpectrum.TabIndex = 1;
             // 
-            // rdoDirectSamplingQ
-            // 
-            rdoDirectSamplingQ.AutoSize = true;
-            rdoDirectSamplingQ.Location = new Point(345, 108);
-            rdoDirectSamplingQ.Margin = new Padding(4);
-            rdoDirectSamplingQ.Name = "rdoDirectSamplingQ";
-            rdoDirectSamplingQ.Size = new Size(174, 27);
-            rdoDirectSamplingQ.TabIndex = 4;
-            rdoDirectSamplingQ.Text = "Direct Sampling Q";
-            rdoDirectSamplingQ.UseVisualStyleBackColor = true;
-            rdoDirectSamplingQ.CheckedChanged += rdoSamplingMode_CheckedChanged;
-            // 
-            // rdoDirectSamplingI
-            // 
-            rdoDirectSamplingI.AutoSize = true;
-            rdoDirectSamplingI.Location = new Point(170, 108);
-            rdoDirectSamplingI.Margin = new Padding(4);
-            rdoDirectSamplingI.Name = "rdoDirectSamplingI";
-            rdoDirectSamplingI.Size = new Size(166, 27);
-            rdoDirectSamplingI.TabIndex = 3;
-            rdoDirectSamplingI.Text = "Direct Sampling I";
-            rdoDirectSamplingI.UseVisualStyleBackColor = true;
-            rdoDirectSamplingI.CheckedChanged += rdoSamplingMode_CheckedChanged;
-            // 
-            // rdoQuadrature
-            // 
-            rdoQuadrature.AutoSize = true;
-            rdoQuadrature.Checked = true;
-            rdoQuadrature.Location = new Point(19, 108);
-            rdoQuadrature.Margin = new Padding(4);
-            rdoQuadrature.Name = "rdoQuadrature";
-            rdoQuadrature.Size = new Size(123, 27);
-            rdoQuadrature.TabIndex = 2;
-            rdoQuadrature.TabStop = true;
-            rdoQuadrature.Text = "Quadrature";
-            rdoQuadrature.UseVisualStyleBackColor = true;
-            rdoQuadrature.CheckedChanged += rdoSamplingMode_CheckedChanged;
-            // 
-            // btnStart
-            // 
-            btnStart.Location = new Point(760, 24);
-            btnStart.Margin = new Padding(4);
-            btnStart.Name = "btnStart";
-            btnStart.Size = new Size(100, 36);
-            btnStart.TabIndex = 13;
-            btnStart.Text = "Start";
-            btnStart.UseVisualStyleBackColor = true;
-            btnStart.Click += btnStart_Click;
-            // 
-            // btnStop
-            // 
-            btnStop.Location = new Point(868, 24);
-            btnStop.Margin = new Padding(4);
-            btnStop.Name = "btnStop";
-            btnStop.Size = new Size(100, 36);
-            btnStop.TabIndex = 14;
-            btnStop.Text = "Stop";
-            btnStop.UseVisualStyleBackColor = true;
-            btnStop.Click += btnStop_Click;
-            // 
             // lblStatus
             // 
+            lblStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lblStatus.AutoSize = true;
             lblStatus.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-            lblStatus.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lblStatus.Location = new Point(12, 962);
             lblStatus.Margin = new Padding(4, 0, 4, 0);
             lblStatus.Name = "lblStatus";
@@ -837,7 +877,6 @@
             // 
             // timerSignalLevel
             // 
-            timerSignalLevel.Interval = 100;
             timerSignalLevel.Tick += timerSignalLevel_Tick;
             // 
             // chkSwapIQ
@@ -862,35 +901,11 @@
             chkInvertDemod.Text = "Invert Demod";
             chkInvertDemod.UseVisualStyleBackColor = true;
             // 
-            // progressSignal
-            // 
-            progressSignal.Location = new Point(140, 110);
-            progressSignal.Margin = new Padding(4);
-            progressSignal.Name = "progressSignal";
-            progressSignal.Size = new Size(335, 24);
-            progressSignal.TabIndex = 16;
-            // 
-            // groupBoxAudio
-            //
-            groupBoxAudio.Controls.Add(lblVolume);
-            groupBoxAudio.Controls.Add(trackVolume);
-            groupBoxAudio.Controls.Add(lblSquelch);
-            groupBoxAudio.Controls.Add(trackSquelch);
-            groupBoxAudio.Controls.Add(lblSignalStrength);
-            groupBoxAudio.Controls.Add(progressSignal);
-            groupBoxAudio.Location = new Point(494, 236);
-            groupBoxAudio.Name = "groupBoxAudio";
-            groupBoxAudio.Size = new Size(494, 150);
-            groupBoxAudio.TabIndex = 3;
-            groupBoxAudio.TabStop = false;
-            groupBoxAudio.Text = "Audio && Signal";
-            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(144F, 144F);
             AutoScaleMode = AutoScaleMode.Dpi;
             ClientSize = new Size(1200, 800);
-            StartPosition = FormStartPosition.CenterScreen;
             Controls.Add(lblStatus);
             Controls.Add(groupBox6);
             Controls.Add(groupBoxAudio);
@@ -900,9 +915,10 @@
             Controls.Add(groupBox1);
             Font = new Font("Segoe UI", 9.5F);
             Margin = new Padding(4);
-            Name = "Form1";
-            Text = "RandySDR";
             MinimumSize = new Size(400, 300);
+            Name = "Form1";
+            StartPosition = FormStartPosition.CenterScreen;
+            Text = "RandySDR";
             Load += Form1_Load;
             groupBox1.ResumeLayout(false);
             groupBox2.ResumeLayout(false);
@@ -913,19 +929,18 @@
             groupBox3.ResumeLayout(false);
             groupBox3.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)trackTunerGain).EndInit();
-            groupBoxAudio.ResumeLayout(false);
-            groupBoxAudio.PerformLayout();
-            groupBox4.ResumeLayout(false);
-            groupBox4.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)trackVolume).EndInit();
-            ((System.ComponentModel.ISupportInitialize)trackSquelch).EndInit();
-            groupBox6.ResumeLayout(false);
-            groupBox6.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)trackRxBandwidth).EndInit();
             ((System.ComponentModel.ISupportInitialize)trackSpecZoom).EndInit();
             ((System.ComponentModel.ISupportInitialize)trackSpecRange).EndInit();
             ((System.ComponentModel.ISupportInitialize)trackSpecRef).EndInit();
-            
+            groupBox4.ResumeLayout(false);
+            groupBox4.PerformLayout();
+            groupBoxAudio.ResumeLayout(false);
+            groupBoxAudio.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)trackVolume).EndInit();
+            ((System.ComponentModel.ISupportInitialize)trackSquelch).EndInit();
+            groupBox6.ResumeLayout(false);
+            groupBox6.PerformLayout();
             ResumeLayout(false);
             PerformLayout();
         }

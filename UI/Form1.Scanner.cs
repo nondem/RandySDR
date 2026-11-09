@@ -8,6 +8,7 @@ namespace RandySDR
         private readonly System.Windows.Forms.Timer _scanTimer = new() { Interval = 25 };
         private bool _scanMuted; // true while hopping between channels so the user does not hear static
         private bool _loadingScanUi;
+        private string? _scanRangeError;
         private decimal _scanOriginalMHz;
 
         private sealed record LogEntry(DateTime Time, double MHz, double Db, string Mode);
@@ -27,19 +28,19 @@ namespace RandySDR
         private const int CbPresetIndex = 6;
         private const int LawEnforcementVhfPresetIndex = 9;
         private const int LawEnforcementUhfPresetIndex = 10;
-        private static readonly (string Name, double Start, double Stop, double Step)[] ScanPresets =
+        private static readonly (string Name, double Start, double Stop, double Step, DemodulationMode? Mode)[] ScanPresets =
         {
-            ("Custom", 0, 0, 0),
-            ("FM broadcast 88.1-107.9 / 200 kHz", 88.1, 107.9, 200),
-            ("Airband 118-137 / 25 kHz", 118, 137, 25),
-            ("NOAA weather 162.400-162.550 / 25 kHz", 162.4, 162.55, 25),
-            ("Marine VHF 156-162.6 / 25 kHz", 156, 162.6, 25),
-            ("2 m ham 144-148 / 5 kHz", 144, 148, 5),
-            ("CB US standard 40 channels (AM)", 26.965, 27.405, 10),
-            ("70 cm ham 430-450 / 5 kHz", 430, 450, 5),
-            ("FRS/GMRS 462.550-467.725 / 12.5 kHz", 462.55, 467.725, 12.5),
-            (ScanSettings.LawEnforcementVhfPresetName, 136, 174, 1.25),
-            ("Law Enforcement UHF 450-470 MHz", 450, 470, 6.25),
+            ("Custom", 0, 0, 0, null),
+            ("FM broadcast 88.1-107.9 / 200 kHz", 88.1, 107.9, 200, DemodulationMode.WideFm),
+            ("Airband 118-137 / 25 kHz", 118, 137, 25, DemodulationMode.Am),
+            ("NOAA weather 162.400-162.550 / 25 kHz", 162.4, 162.55, 25, DemodulationMode.NarrowFm),
+            ("Marine VHF 156-162.6 / 25 kHz", 156, 162.6, 25, DemodulationMode.NarrowFm),
+            ("2 m ham 144-148 / 5 kHz", 144, 148, 5, DemodulationMode.NarrowFm),
+            ("CB US standard 40 channels (AM)", 26.965, 27.405, 10, DemodulationMode.Am),
+            ("70 cm ham 430-450 / 5 kHz", 430, 450, 5, DemodulationMode.NarrowFm),
+            ("FRS/GMRS 462.550-467.725 / 12.5 kHz", 462.55, 467.725, 12.5, DemodulationMode.NarrowFm),
+            (ScanSettings.LawEnforcementVhfPresetName, 136, 174, 1.25, DemodulationMode.NarrowFm),
+            ("Law Enforcement UHF 450-470 MHz", 450, 470, 6.25, DemodulationMode.NarrowFm),
         };
 
         private void BuildScannerPanel()
@@ -128,7 +129,13 @@ namespace RandySDR
             _cmbMethod.SelectedIndexChanged += (_, _) => ReadScanSettingsFromUi();
             _cmbHold.SelectedIndexChanged += (_, _) => ReadScanSettingsFromUi();
             _trackThreshold.ValueChanged += (_, _) => ReadScanSettingsFromUi();
-            _chkAutoMode.CheckedChanged += (_, _) => ReadScanSettingsFromUi();
+            _chkAutoMode.CheckedChanged += (_, _) =>
+            {
+                if (_loadingScanUi) return;
+                ReadScanSettingsFromUi();
+                if (_chkAutoMode.Checked && _scanner is { State: not ScanState.Idle } scanner)
+                    SelectModeForBand((scanner.State == ScanState.Locked ? scanner.LockedHz : scanner.ChannelHz[0]) / 1e6);
+            };
             _chkLog.CheckedChanged += (_, _) => ReadScanSettingsFromUi();
             _chkAutoThreshold.CheckedChanged += (_, _) => ReadScanSettingsFromUi();
             _numAutoTrim.ValueChanged += (_, _) => ReadScanSettingsFromUi();
@@ -283,8 +290,7 @@ namespace RandySDR
             _chkLinkSquelch.Checked = s.LinkSquelch;
             int presetIndex = Array.FindIndex(ScanPresets, p => p.Name == s.PresetName
                 && p.Start == s.StartMHz && p.Stop == s.StopMHz && p.Step == s.StepKHz);
-            _cmbPreset.SelectedIndex = s.UseCbChannels ? CbPresetIndex
-                : IsLawEnforcementPreset(presetIndex) ? presetIndex : 0;
+            _cmbPreset.SelectedIndex = s.UseCbChannels ? CbPresetIndex : Math.Max(0, presetIndex);
             _loadingScanUi = false;
             RefreshLockoutList();
             RefreshThresholdLabel();
@@ -294,13 +300,28 @@ namespace RandySDR
         {
             if (_loadingScanUi) return;
             var s = _scanSettings;
-            s.StartMHz = (double)_numStart.Value;
-            s.StopMHz = (double)_numStop.Value;
-            s.StepKHz = (double)_numStep.Value;
-            s.UseCbChannels = _cmbPreset.SelectedIndex == CbPresetIndex;
-            s.PresetName = IsLawEnforcementPreset(_cmbPreset.SelectedIndex)
+            double start = (double)_numStart.Value;
+            double stop = (double)_numStop.Value;
+            double step = (double)_numStep.Value;
+            bool useCb = _cmbPreset.SelectedIndex == CbPresetIndex;
+            string? preset = _cmbPreset.SelectedIndex > 0
                 ? ScanPresets[_cmbPreset.SelectedIndex].Name : null;
-            s.Method = (ScanMethod)Math.Max(0, _cmbMethod.SelectedIndex);
+            var method = (ScanMethod)Math.Max(0, _cmbMethod.SelectedIndex);
+            bool running = _scanner is { State: not ScanState.Idle };
+            bool changed = s.StartMHz != start || s.StopMHz != stop || s.StepKHz != step
+                || s.UseCbChannels != useCb || s.PresetName != preset || s.Method != method;
+            _scanRangeError = running && (stop <= start || step <= 0)
+                ? "Range not applied: stop must be above start."
+                : null;
+            if (_scanRangeError == null)
+            {
+                s.StartMHz = start;
+                s.StopMHz = stop;
+                s.StepKHz = step;
+                s.UseCbChannels = useCb;
+                s.PresetName = preset;
+                s.Method = method;
+            }
             s.Hold = (HoldMode)Math.Max(0, _cmbHold.SelectedIndex);
             // The manual value is only written when auto is off, so auto mode never overwrites it.
             if (!_chkAutoThreshold.Checked) s.ThresholdDb = _trackThreshold.Value;
@@ -314,6 +335,19 @@ namespace RandySDR
             s.SquelchOffsetDb = (int)_numSquelchOffset.Value;
             RefreshThresholdLabel();
             _numHold.Enabled = s.Hold != HoldMode.UntilResumed;
+            if (running && changed && _scanRangeError == null)
+            {
+                if (!_scanner!.Start(out string error))
+                {
+                    StopScan();
+                    MessageBox.Show(error, "Scanner", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                _noiseFloorDb = float.NaN;
+                ApplyLinkedSquelch();
+                if (s.AutoSelectMode) SelectModeForBand(_scanner.ChannelHz[0] / 1e6);
+            }
+            if (running) UpdateScanUi();
         }
 
         private void RefreshThresholdLabel()
@@ -339,6 +373,7 @@ namespace RandySDR
 
         private void PresetChanged(object? sender, EventArgs e)
         {
+            if (_loadingScanUi) return;
             int i = _cmbPreset.SelectedIndex;
             if (i <= 0)
             {
@@ -358,6 +393,8 @@ namespace RandySDR
             }
             _loadingScanUi = false;
             ReadScanSettingsFromUi();
+            if (_scanRangeError == null && _scanSettings.AutoSelectMode)
+                SelectModeForBand(p.Start);
         }
 
         private void ToggleScan()
@@ -385,6 +422,7 @@ namespace RandySDR
                 return;
             }
 
+            if (_scanSettings.AutoSelectMode) SelectModeForBand(_scanner.ChannelHz[0] / 1e6);
             _noiseFloorDb = float.NaN;
             ApplyLinkedSquelch();
             // Wideband hops span ~1.9 MHz; a narrow tuner IF filter (default 200 kHz) would attenuate all but the middle of each hop.
@@ -412,6 +450,7 @@ namespace RandySDR
             bool wasLocked = _scanner.State == ScanState.Locked;
             _scanner.Stop();
             _scanTimer.Stop();
+            _scanRangeError = null;
             RefreshScanMute();
             _sdr?.SetTunerBandwidth((uint)numTunerBandwidth.Value * 1000);
 
@@ -447,6 +486,7 @@ namespace RandySDR
         }
 
         private ScanState _lastScanUiState = ScanState.Idle;
+        private bool _lastScanUiStartupSettling;
         private long _lastScanUiTick;
 
         private void OnScanUpdated()
@@ -456,8 +496,10 @@ namespace RandySDR
             // Repaint the readouts at most ~12 times a second; state changes always go through immediately.
             var state = _scanner.State;
             long now = Environment.TickCount64;
-            if (state == _lastScanUiState && now - _lastScanUiTick < 80) return;
+            bool settling = _scanner.IsStartupSettling;
+            if (state == _lastScanUiState && settling == _lastScanUiStartupSettling && now - _lastScanUiTick < 80) return;
             _lastScanUiState = state;
+            _lastScanUiStartupSettling = settling;
             _lastScanUiTick = now;
             UpdateScanUi();
             if (_chkAutoThreshold.Checked) RefreshThresholdLabel();
@@ -482,7 +524,7 @@ namespace RandySDR
             _btnResume.Enabled = state == ScanState.Locked;
             _btnLockout.Enabled = true;
             foreach (Control c in new Control[] { _numStart, _numStop, _numStep, _cmbMethod, _cmbPreset })
-                c.Enabled = !running;
+                c.Enabled = true;
             UpdateCardStates();
 
             if (sc == null || !running)
@@ -499,10 +541,14 @@ namespace RandySDR
                     if (sc.ChannelHz[i] == sc.LockedHz) { marker = i; break; }
 
             _scanGraph.SetData(sc.Strength, sc.ChannelHz, marker, true);
-            _lblScanStatus.Text = state == ScanState.Locked
+            _lblScanStatus.Text = sc.IsStartupSettling
+                ? "Settling radio before scanning..."
+                : state == ScanState.Locked
                 ? $"LOCKED {sc.LockedHz / 1e6:0.0000} MHz  signal +{sc.LockedStrengthDb:F1} dB  (floor {sc.NoiseFloorDb:F1} dBFS)"
                 : $"Scanning {sc.CurrentHz / 1e6:F3} MHz   floor {sc.NoiseFloorDb:F1} dBFS   sweeps: {sc.SweepCount}";
-            _lblScanStatus.ForeColor = state == ScanState.Locked ? Color.FromArgb(90, 220, 130) : Color.FromArgb(90, 190, 255);
+            if (_scanRangeError != null) _lblScanStatus.Text += $"  |  {_scanRangeError}";
+            _lblScanStatus.ForeColor = _scanRangeError != null ? Color.Orange
+                : state == ScanState.Locked ? Color.FromArgb(90, 220, 130) : Color.FromArgb(90, 190, 255);
         }
 
         /// <summary>Lights up cards whose controls are usable right now and dims the rest.</summary>
@@ -525,7 +571,7 @@ namespace RandySDR
                 c.BadgeColor = badgeColor;
             }
 
-            Set(groupBox1, true, receiving ? "RECEIVING" : open ? "DEVICE READY" : "NO DEVICE OPEN", receiving ? green : open ? blue : amber);
+            Set(groupBox1, true, _deviceOpening ? "OPENING DEVICE" : receiving ? "RECEIVING" : open ? "DEVICE READY" : "NO DEVICE OPEN", receiving ? green : open ? blue : amber);
             Set(groupBox2, open, open ? null : "OPEN DEVICE");
             Set(groupBox3, open, open ? null : "OPEN DEVICE");
             Set(groupBox4, open, open ? null : "OPEN DEVICE");
@@ -534,7 +580,7 @@ namespace RandySDR
 
             bool usable = receiving || running;
             string wait = "START RECEIVING";
-            Set(_cardRange, usable && !running, running ? "LOCKED WHILE SCANNING" : usable ? null : wait);
+            Set(_cardRange, usable, running ? "LIVE" : usable ? null : wait, running ? blue : null);
             Set(_cardDetect, usable, usable ? (_chkAutoThreshold.Checked ? "AUTO" : "MANUAL") : wait, usable ? blue : null);
             Set(_cardBehave, usable, usable ? null : wait);
             Set(_cardControl, usable,
@@ -595,13 +641,22 @@ namespace RandySDR
 
         private void SelectModeForBand(double mhz)
         {
-            RadioButton? target = IsLawEnforcementPreset(_cmbPreset.SelectedIndex) ? rdoDemodNarrowFm : mhz switch
+            var preset = ScanPresets.FirstOrDefault(p => p.Name == _scanSettings.PresetName
+                && p.Start == _scanSettings.StartMHz && p.Stop == _scanSettings.StopMHz && p.Step == _scanSettings.StepKHz);
+            DemodulationMode? mode = preset.Mode ?? mhz switch
             {
-                >= 87.5 and <= 108 => rdoDemodWideFm,          // FM broadcast - use Wide FM for best audio quality
-                > 108 and <= 137 => rdoDemodAm,                  // Airband - AM mode for ATC communications
-                >= 25 and <= 30 => rdoDemodAm,
-                >= 137 and <= 174 => rdoDemodNarrowFm,          // Amateur radio 2m - Narrow FM for local repeaters
-                >= 430 and <= 470 => rdoDemodNarrowFm,          // Amateur radio 70cm - Narrow FM
+                >= 87.5 and <= 108 => DemodulationMode.WideFm,
+                > 108 and <= 137 => DemodulationMode.Am,
+                >= 25 and <= 30 => DemodulationMode.Am,
+                >= 137 and <= 174 => DemodulationMode.NarrowFm,
+                >= 430 and <= 470 => DemodulationMode.NarrowFm,
+                _ => null
+            };
+            RadioButton? target = mode switch
+            {
+                DemodulationMode.WideFm => rdoDemodWideFm,
+                DemodulationMode.NarrowFm => rdoDemodNarrowFm,
+                DemodulationMode.Am => rdoDemodAm,
                 _ => null
             };
             if (target != null) target.Checked = true;

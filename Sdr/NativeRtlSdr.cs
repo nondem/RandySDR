@@ -76,6 +76,9 @@ namespace RandySDR
         private static extern int rtlsdr_set_offset_tuning(IntPtr dev, int on);
 
         [DllImport("rtlsdr", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int rtlsdr_get_offset_tuning(IntPtr dev);
+
+        [DllImport("rtlsdr", CallingConvention = CallingConvention.Cdecl)]
         private static extern int rtlsdr_set_direct_sampling(IntPtr dev, int on);
 
         [DllImport("rtlsdr", CallingConvention = CallingConvention.Cdecl, EntryPoint = "rtlsdr_set_bias_tee")]
@@ -417,7 +420,7 @@ namespace RandySDR
             try
             {
                 int result = rtlsdr_set_offset_tuning(_device, enabled ? 1 : 0);
-                if (result == 0)
+                if (OffsetTuningSucceeded(result, enabled, () => rtlsdr_get_offset_tuning(_device)))
                 {
                     System.Diagnostics.Debug.WriteLine($"✓ Offset tuning {(enabled ? "enabled" : "disabled")}");
                     return true;
@@ -431,6 +434,9 @@ namespace RandySDR
                 return false;
             }
         }
+
+        internal static bool OffsetTuningSucceeded(int result, bool enabled, Func<int> readOffsetTuning) =>
+            result == 0 || (result == -2 && !enabled && readOffsetTuning() == 0);
 
         public bool Start(Action<byte[]> dataCallback)
         {
@@ -586,7 +592,7 @@ namespace RandySDR
             try
             {
                 int result = rtlsdr_set_freq_correction(_device, ppm);
-                if (result == 0)
+                if (PpmCorrectionSucceeded(result, ppm, () => rtlsdr_get_freq_correction(_device)))
                 {
                     System.Diagnostics.Debug.WriteLine($"✓ Set PPM correction to {ppm}");
                     return true;
@@ -600,6 +606,9 @@ namespace RandySDR
                 return false;
             }
         }
+
+        internal static bool PpmCorrectionSucceeded(int result, int ppm, Func<int> readCorrection) =>
+            result == 0 || (result == -2 && readCorrection() == ppm);
 
         public int GetPpmCorrection()
         {

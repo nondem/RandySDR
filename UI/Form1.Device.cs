@@ -3,6 +3,10 @@ namespace RandySDR
 {
     public partial class Form1
     {
+        private bool _deviceOpening;
+        private bool _closeAfterOpen;
+        private Func<Func<int[]>, Task<int[]>> _runDeviceOpen = operation => Task.Run(operation);
+
         private void LoadConnectedDevices()
         {
             try
@@ -33,48 +37,50 @@ namespace RandySDR
             }
         }
 
-        private void btnOpen_Click(object sender, EventArgs e)
+        private async void btnOpen_Click(object sender, EventArgs e)
         {
+            if (_deviceOpening || cmbDevices.SelectedIndex < 0 || cmbDevices.SelectedIndex >= _devices.Count)
+                return;
+
+            var device = _devices[cmbDevices.SelectedIndex];
+            uint sampleRate = (uint)(numSampleRate.Value * 1_000_000);
+            uint centerFrequencyHz = (uint)(numFrequency.Value * 1_000_000);
+            uint tunerBandwidthHz = (uint)numTunerBandwidth.Value * 1000;
+            int ppm = (int)numPpm.Value;
+            bool tunerAgc = chkTunerAGC.Checked;
+            bool rtlAgc = chkRtlAGC.Checked;
+            int manualGainTenthdB = trackTunerGain.Value;
+            bool offsetTuning = chkOffsetTuning.Checked;
+            int samplingMode = GetSamplingMode();
+            var openingDevice = new RtlSdrWrapper();
+            bool handedOff = false;
+            Exception? openingError = null;
+            _deviceOpening = true;
+            btnOpen.Enabled = false;
+            cmbDevices.Enabled = false;
+            lblStatus.Text = $"Opening device: {device.Name}...";
+            lblStatus.ForeColor = Color.Orange;
+            UpdateCardStates();
+
             try
             {
-                if (cmbDevices.SelectedIndex < 0 || cmbDevices.SelectedIndex >= _devices.Count)
-                    return;
+                int[] gains = await _runDeviceOpen(() =>
+                {
+                    if (!openingDevice.OpenDevice(device.Index))
+                        throw new InvalidOperationException("The SDR device could not be opened.");
+                    if (!openingDevice.ConfigureReceiveChain(sampleRate, centerFrequencyHz, tunerAgc, rtlAgc,
+                        manualGainTenthdB, ppm, tunerBandwidthHz, offsetTuning, false, samplingMode, out string error))
+                        throw new InvalidOperationException(error);
+                    int[] availableGains = openingDevice.GetTunerGains();
+                    if (!tunerAgc && availableGains.Length > 0)
+                    {
+                        Array.Sort(availableGains);
+                        openingDevice.SetTunerGain(availableGains[availableGains.Length / 2]);
+                    }
+                    return availableGains;
+                });
 
-                var device = _devices[cmbDevices.SelectedIndex];
-                _sdr.OpenDevice(device.Index);
-
-                uint sampleRate = (uint)(numSampleRate.Value * 1_000_000);
-                uint centerFrequencyHz = (uint)(numFrequency.Value * 1_000_000);
-                uint tunerBandwidthHz = (uint)numTunerBandwidth.Value * 1000;
-                int ppm = (int)numPpm.Value;
-                bool tunerAgc = chkTunerAGC.Checked;
-                bool rtlAgc = chkRtlAGC.Checked;
-                int manualGainTenthdB = trackTunerGain.Value;
-                bool biasTeeEnabled = false; // enable if using active antenna/LNA
-                int samplingMode = GetSamplingMode();
-
-                System.Diagnostics.Debug.WriteLine("=== OPENING DEVICE (RTL-SDR V4 SEQUENCE) ===");
-                System.Diagnostics.Debug.WriteLine($"  Frequency: {numFrequency.Value:F6} MHz");
-                System.Diagnostics.Debug.WriteLine($"  Sample Rate: {sampleRate / 1e6:F3} MSPS");
-                System.Diagnostics.Debug.WriteLine($"  Tuner BW: {numTunerBandwidth.Value} kHz");
-                System.Diagnostics.Debug.WriteLine($"  Tuner AGC: {tunerAgc}");
-                System.Diagnostics.Debug.WriteLine($"  RTL AGC: {rtlAgc}");
-                System.Diagnostics.Debug.WriteLine($"  Manual Gain: {manualGainTenthdB / 10.0:F1} dB");
-                System.Diagnostics.Debug.WriteLine($"  PPM: {ppm}");
-                System.Diagnostics.Debug.WriteLine($"  Bias-Tee: {biasTeeEnabled}");
-                System.Diagnostics.Debug.WriteLine($"  Sampling Mode: {samplingMode}");
-
-                _sdr.ConfigureReceiveChain(
-                    sampleRate,
-                    centerFrequencyHz,
-                    tunerAgc,
-                    rtlAgc,
-                    manualGainTenthdB,
-                    ppm,
-                    tunerBandwidthHz,
-                    chkOffsetTuning.Checked,
-                    biasTeeEnabled,
-                    samplingMode);
+                if (_closeAfterOpen) return;
 
                 // Initialize spectrum analyzer
                 _spectrum = chkSpectrumEnabled.Checked ? new SpectrumAnalyzer(4096) : null;
@@ -84,14 +90,43 @@ namespace RandySDR
                 _pipeline = new ReceiverPipeline((int)sampleRate);
                 UpdateDemodulatorSettings();
 
-                LoadGains();
+                _sdr = openingDevice;
+                handedOff = true;
+                LoadGains(gains);
                 UpdateControlsState(true);
                 lblStatus.Text = $"Connected (PPM: {numPpm.Value})";
                 lblStatus.ForeColor = Color.Green;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error opening device: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                _pipeline?.Dispose();
+                _pipeline = null;
+                _spectrumTimer.Stop();
+                _spectrum = null;
+                handedOff = false;
+                _sdr = new RtlSdrWrapper();
+                openingError = ex;
+            }
+            finally
+            {
+                if (!handedOff)
+                    await Task.Run(openingDevice.CloseDevice);
+                _deviceOpening = false;
+                if (_closeAfterOpen)
+                {
+                    Close();
+                }
+                else
+                {
+                    UpdateControlsState(handedOff);
+                    UpdateCardStates();
+                }
+            }
+            if (openingError != null && !_closeAfterOpen)
+            {
+                lblStatus.Text = "Device opening failed";
+                lblStatus.ForeColor = Color.Red;
+                MessageBox.Show($"Error opening device: {openingError.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

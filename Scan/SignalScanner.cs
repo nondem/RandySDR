@@ -18,6 +18,7 @@ namespace RandySDR
         private const double WeatherExclusionEndHz = 162_600_000;
         private const double MinAutoDb = 3;
         private const double MaxAutoDb = 40;
+        private const int StartupSettleMs = 1000;
         /// <summary>Sigma multiplier for automatic threshold calculation. Higher = more robust to noise spikes, lower = more sensitive.</summary>
         private const double AutoSigmas = 4;
         /// <summary>Minimum margin above median noise for automatic threshold.</summary>
@@ -34,6 +35,10 @@ namespace RandySDR
         private readonly Func<int> _sampleRate;
         private readonly HopMeasurement _meas = new();
         private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private readonly Func<long> _now;
+        private bool _startupSettling;
+        private long? _startupStartedMs;
+        private int? _startupBufferCount;
 
         private sealed record Hop(double CenterHz, int[] Channels);
 
@@ -54,6 +59,7 @@ namespace RandySDR
 
         public ScanState State => _phase == Phase.Off ? ScanState.Idle
             : (_phase == Phase.Locked || _phase == Phase.SettlingLock) ? ScanState.Locked : ScanState.Scanning;
+        public bool IsStartupSettling => _phase != Phase.Off && _startupSettling;
 
         /// <summary>Strength (dB above floor) per channel from the latest measurement; NaN if not yet measured.</summary>
         public double[] Strength { get; private set; } = Array.Empty<double>();
@@ -80,11 +86,18 @@ namespace RandySDR
         public event Action<float>? QuietChannelMeasured;
 
         public SignalScanner(ScanSettings settings, Action<uint> tune, Func<ReceiverPipeline?> pipeline, Func<int> sampleRate)
+            : this(settings, tune, pipeline, sampleRate, null)
+        {
+        }
+
+        internal SignalScanner(ScanSettings settings, Action<uint> tune, Func<ReceiverPipeline?> pipeline,
+            Func<int> sampleRate, Func<long>? now)
         {
             _s = settings;
             _tune = tune;
             _pipeline = pipeline;
             _sampleRate = sampleRate;
+            _now = now ?? (() => _clock.ElapsedMilliseconds);
         }
 
         public bool Start(out string error)
@@ -114,6 +127,7 @@ namespace RandySDR
                 return false;
             }
 
+            bool starting = _phase == Phase.Off;
             BuildPlan();
             _hopThresholdDb = Enumerable.Repeat(double.NaN, _hops.Count).ToArray();
             if (_channelHz.Length == 0)
@@ -125,6 +139,12 @@ namespace RandySDR
             SweepCount = 0;
             _hopIndex = 0;
             _lockedChannel = -1;
+            if (starting)
+            {
+                _startupSettling = true;
+                _startupStartedMs = null;
+            }
+            if (_startupSettling) _startupBufferCount = null;
             BeginHop();
             return true;
         }
@@ -132,6 +152,9 @@ namespace RandySDR
         public void Stop()
         {
             _phase = Phase.Off;
+            _startupSettling = false;
+            _startupStartedMs = null;
+            _startupBufferCount = null;
             _lockedChannel = -1;
             Updated?.Invoke();
         }
@@ -213,7 +236,7 @@ namespace RandySDR
             var p = _pipeline();
             _tuneBuffers = p?.BuffersProcessed ?? 0;
             _lastSeenBuffers = _tuneBuffers;
-            _tuneTimeMs = _clock.ElapsedMilliseconds;
+            _tuneTimeMs = _now();
             _tune((uint)Math.Round(hz));
         }
 
@@ -224,7 +247,20 @@ namespace RandySDR
             var p = _pipeline();
             if (p == null) { Stop(); return; }
 
-            long now = _clock.ElapsedMilliseconds;
+            long now = _now();
+            if (_startupSettling)
+            {
+                _startupStartedMs ??= now;
+                if (now - _startupStartedMs.Value < StartupSettleMs) return;
+                if (!_startupBufferCount.HasValue)
+                {
+                    _startupBufferCount = p.BuffersProcessed;
+                    return;
+                }
+                if (p.BuffersProcessed - _startupBufferCount.Value < 2) return;
+                _startupSettling = false;
+                Updated?.Invoke();
+            }
             bool settled = p.BuffersProcessed >= _tuneBuffers + 2 && now - _tuneTimeMs >= _s.SettleMs;
 
             switch (_phase)

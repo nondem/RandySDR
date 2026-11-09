@@ -9,6 +9,7 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        CheckStartupSettling();
         string directory = Path.Combine(Path.GetTempPath(), "RandySDR-scan-check-" + Guid.NewGuid());
         Directory.CreateDirectory(directory);
         try
@@ -70,11 +71,170 @@ internal static class Program
             Check(weather.Count == 7 && weather[0] == 162_400_000 && weather[^1] == 162_550_000,
                 "The NOAA preset must continue scanning all seven weather channels.");
 
+            CheckPresetModes(form, presets, auto, settings);
             Console.WriteLine("Scan preset, channel grid, mode and persistence checks passed.");
         }
         finally
         {
             Directory.Delete(directory, false);
+        }
+    }
+
+    private static void CheckStartupSettling()
+    {
+        using var pipeline = new ReceiverPipeline(2_400_000);
+        var settings = new ScanSettings
+        {
+            StartMHz = 100, StopMHz = 100.2, StepKHz = 200,
+            Method = ScanMethod.TuneEachChannel, SettleMs = 120, AutoThreshold = false, ThresholdDb = 8
+        };
+        long now = 0;
+        var constructor = typeof(SignalScanner).GetConstructor(PrivateInstance, null,
+            new[] { typeof(ScanSettings), typeof(Action<uint>), typeof(Func<ReceiverPipeline>), typeof(Func<int>), typeof(Func<long>) }, null)!;
+        var scanner = (SignalScanner)constructor.Invoke(new object[]
+        {
+            settings, (Action<uint>)(_ => { }), (Func<ReceiverPipeline?>)(() => pipeline),
+            (Func<int>)(() => 2_400_000), (Func<long>)(() => now)
+        });
+        int locks = 0;
+        int quietMeasurements = 0;
+        scanner.SignalLocked += (_, _) => locks++;
+        scanner.QuietChannelMeasured += _ => quietMeasurements++;
+        byte[] signal = new byte[8192];
+        for (int i = 0; i < signal.Length / 2; i++)
+        {
+            double phase = -2 * Math.PI * 300_000 * i / 2_400_000;
+            signal[2 * i] = (byte)Math.Round(127.5 + 80 * Math.Cos(phase));
+            signal[2 * i + 1] = (byte)Math.Round(127.5 + 80 * Math.Sin(phase));
+        }
+        SetField(pipeline, "_lastIqData", signal);
+        Check(scanner.Start(out string error), $"Scanner failed to start: {error}");
+        Check(scanner.IsStartupSettling && scanner.State == ScanState.Scanning,
+            "A new scan must enter the startup settling state.");
+        scanner.Tick();
+        SetField(pipeline, "_buffersProcessed", 10);
+        now = 999;
+        scanner.Tick();
+        Check(scanner.IsStartupSettling && scanner.State == ScanState.Scanning && locks == 0
+            && quietMeasurements == 0 && scanner.Strength.All(double.IsNaN),
+            "No detection or measurement may occur before the one-second startup delay.");
+        now = 1000;
+        scanner.Tick();
+        Check(scanner.IsStartupSettling && locks == 0, "Startup must wait for buffers received after the delay.");
+        SetField(pipeline, "_buffersProcessed", 11);
+        scanner.Tick();
+        Check(scanner.IsStartupSettling && locks == 0, "One fresh buffer is insufficient.");
+        SetField(pipeline, "_buffersProcessed", 12);
+        scanner.Tick();
+        Check(!scanner.IsStartupSettling && scanner.State == ScanState.Locked && locks == 1,
+            "A strong signal must be detectable after the delay and two fresh buffers.");
+
+        scanner.Resume();
+        Check(!scanner.IsStartupSettling && scanner.State == ScanState.Scanning,
+            "Resume must not restart the startup delay.");
+        SetField(pipeline, "_buffersProcessed", 14);
+        now += 119;
+        scanner.Tick();
+        Check(scanner.CurrentHz == 100_300_000, "Resume must still respect the per-hop settling time.");
+        now++;
+        scanner.Tick();
+        Check(scanner.CurrentHz == 100_500_000, "Resume must advance after the normal per-hop settling time.");
+
+        Check(scanner.Start(out error) && !scanner.IsStartupSettling,
+            "Replanning a running scan must not repeat the startup delay.");
+        scanner.Stop();
+        Check(!scanner.IsStartupSettling && scanner.State == ScanState.Idle,
+            "Stopping must cancel startup settling.");
+        Check(scanner.Start(out error) && scanner.IsStartupSettling,
+            "Starting a new scan after stopping must reapply startup settling.");
+        scanner.Tick();
+        now += 500;
+        Check(scanner.Start(out error) && scanner.IsStartupSettling,
+            "Replanning during startup must keep the original settling period.");
+        now += 500;
+        scanner.Tick();
+        SetField(pipeline, "_buffersProcessed", 16);
+        scanner.Tick();
+        Check(!scanner.IsStartupSettling, "Replanning during startup must not restart the one-second timer.");
+        scanner.Stop();
+        settings.SettleMs = 1500;
+        now = 0;
+        Check(scanner.Start(out error), "Scanner should start with a longer per-hop settling time.");
+        scanner.Tick();
+        now = 1000;
+        scanner.Tick();
+        SetField(pipeline, "_buffersProcessed", 18);
+        now = 1499;
+        scanner.Tick();
+        Check(scanner.State == ScanState.Scanning, "Startup must not bypass a longer per-hop settling time.");
+        now = 1500;
+        scanner.Tick();
+        Check(scanner.State == ScanState.Locked, "Detection should resume after the longer per-hop settling time.");
+        scanner.Stop();
+    }
+
+    private static void SetField(object instance, string name, object value) =>
+        instance.GetType().GetField(name, PrivateInstance)!.SetValue(instance, value);
+
+    private static void CheckPresetModes(Form1 form, ComboBox presets, CheckBox auto, ScanSettings settings)
+    {
+        var pipeline = new ReceiverPipeline(2_400_000);
+        typeof(Form1).GetField("_pipeline", PrivateInstance)!.SetValue(form, pipeline);
+        try
+        {
+            var cases = new (int Index, DemodulationMode Mode)[]
+            {
+                (1, DemodulationMode.WideFm), (2, DemodulationMode.Am),
+                (3, DemodulationMode.NarrowFm), (4, DemodulationMode.NarrowFm),
+                (5, DemodulationMode.NarrowFm), (6, DemodulationMode.Am),
+                (7, DemodulationMode.NarrowFm), (8, DemodulationMode.NarrowFm),
+                (9, DemodulationMode.NarrowFm), (10, DemodulationMode.NarrowFm)
+            };
+            foreach (var (index, mode) in cases)
+            {
+                auto.Checked = true;
+                presets.SelectedIndex = 0;
+                Field<RadioButton>(form, mode == DemodulationMode.Am ? "rdoDemodWideFm" : "rdoDemodAm").Checked = true;
+                presets.SelectedIndex = index;
+                Check(pipeline.Demodulator.Mode == mode, $"Preset {index} must apply {mode} to the demodulator immediately.");
+                double start = settings.StartMHz;
+                double stop = settings.StopMHz;
+                settings.LogDetections = false;
+                Call(form, "OnScanLocked", start * 1_000_000, 10d);
+                Check(pipeline.Demodulator.Mode == mode, $"Preset {index} start must retain {mode} on lock.");
+                Call(form, "OnScanLocked", stop * 1_000_000, 10d);
+                Check(pipeline.Demodulator.Mode == mode, $"Preset {index} endpoint must retain {mode} on lock.");
+                Call(form, "LoadScanSettingsToUi");
+                Check(presets.SelectedIndex == index, $"Preset {index} must survive a settings reload.");
+                Call(form, "OnScanLocked", stop * 1_000_000, 10d);
+                Check(pipeline.Demodulator.Mode == mode, $"Restored preset {index} must retain {mode} on lock.");
+            }
+
+            auto.Checked = false;
+            Field<RadioButton>(form, "rdoDemodAm").Checked = true;
+            presets.SelectedIndex = 1;
+            Check(pipeline.Demodulator.Mode == DemodulationMode.Am && !auto.Checked,
+                "Selecting a normal preset with automatic mode off must preserve manual demodulation.");
+            Call(form, "OnScanLocked", 100_000_000d, 10d);
+            Check(pipeline.Demodulator.Mode == DemodulationMode.Am,
+                "Automatic mode off must preserve the manual mode when a signal locks.");
+
+            presets.SelectedIndex = 0;
+            auto.Checked = true;
+            Call(form, "OnScanLocked", 100_000_000d, 10d);
+            Check(pipeline.Demodulator.Mode == DemodulationMode.WideFm, "Custom FM broadcast channels must use wide FM.");
+            Call(form, "OnScanLocked", 120_000_000d, 10d);
+            Check(pipeline.Demodulator.Mode == DemodulationMode.Am, "Custom airband channels must use AM.");
+            Call(form, "OnScanLocked", 145_000_000d, 10d);
+            Check(pipeline.Demodulator.Mode == DemodulationMode.NarrowFm, "Custom 2 m channels must use narrow FM.");
+            Call(form, "OnScanLocked", 300_000_000d, 10d);
+            Check(pipeline.Demodulator.Mode == DemodulationMode.NarrowFm,
+                "Unknown custom bands must preserve the current mode rather than guess.");
+        }
+        finally
+        {
+            typeof(Form1).GetField("_pipeline", PrivateInstance)!.SetValue(form, null);
+            pipeline.Dispose();
         }
     }
 

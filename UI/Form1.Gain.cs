@@ -79,9 +79,8 @@ namespace RandySDR
             return _supportedGains.OrderBy(g => Math.Abs(g - requested)).First();
         }
 
-        private void LoadGains()
+        private void LoadGains(int[] gains)
         {
-            var gains = _sdr.GetTunerGains();
             if (gains != null && gains.Length > 0)
             {
                 _supportedGains = gains.OrderBy(g => g).ToArray();
@@ -91,11 +90,6 @@ namespace RandySDR
                 trackTunerGain.Value = _supportedGains[_supportedGains.Length / 2];
                 lblTunerGain.Text = $"Tuner Gain: {trackTunerGain.Value / 10.0:F1} dB";
 
-                // Ensure manual gain mode actually applies a gain value on open.
-                if (!chkTunerAGC.Checked)
-                {
-                    _sdr.SetTunerGain(trackTunerGain.Value);
-                }
             }
         }
     }

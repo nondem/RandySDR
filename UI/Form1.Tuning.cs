@@ -15,11 +15,11 @@ namespace RandySDR
         {
             uint newFreq = (uint)(numFrequency.Value * 1_000_000);
             RetuneRadio(newFreq);
-            lblFreqDisplay.Text = $"{numFrequency.Value:F3} MHz";
+            lblFreqDisplay.Text = $"{numFrequency.Value:F3}";
 
             if (_sdr != null && !_sdr.IsTestMode)
             {
-                lblStatus.Text = $"✓ Tuned to {numFrequency.Value:F3} MHz";
+                lblStatus.Text = $"✓ Tuned to {numFrequency.Value:F3}";
             }
         }
 

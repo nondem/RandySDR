@@ -1,5 +1,13 @@
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appDir = Join-Path $scriptDir "bin\Debug\net10.0-windows\"
+$projectPath = Join-Path $scriptDir "RandySDR.csproj"
+
+Write-Host "Building app and runtime dependencies..." -ForegroundColor Yellow
+& dotnet build $projectPath
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Build failed. The app was not started." -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
 Write-Host "Checking for required DLLs..." -ForegroundColor Yellow
 

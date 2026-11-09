@@ -28,18 +28,29 @@ UI timer (50 ms) --> ReceiverPipeline.LastIqData --> SpectrumAnalyzer (FFT) --> 
 | `UI/` | `Form1.cs` | Fields, constructor, control init, enable/disable state, shutdown. |
 | | `Form1.Device.cs` | Open / Close / Start / Stop handlers. |
 | | `Form1.Tuning.cs` | Frequency, sample rate, PPM, tuner BW, offset tuning, scan, direct sampling. |
-| | `Form1.Gain.cs` | Tuner/RTL AGC, manual gain, ADC overload (`lblClip`), signal meter. |
+| | `Form1.Gain.cs` | Tuner/RTL AGC, manual gain, ADC overload (`lblClip`). |
 | | `Form1.Audio.cs` | Volume, squelch, de-emphasis, mode, I/Q swap/invert. |
 | | `Form1.Spectrum.cs` | Spectrum timer, zoom, range, ref level. |
-| | `Form1.Diagnostics.cs` | Diagnostics report. |
+| | `Form1.Scanner.cs` | Scanner state machine UI, cards, presets, lockouts, CSV export. |
+| | `Form1.SquelchLink.cs` | Optional link between audio squelch and scanner detection threshold; noise floor tracking on quiet hops. |
+| | `Form1.Layout.cs` | Dashboard layout builder, migration of legacy panel settings. |
+| | `Form1.Diagnostics.cs` | Diagnostics report UI. |
 | | `Form1.Designer.cs` / `.resx` | Layout (keep handler names in sync). |
-| | `SpectrumDisplay.cs`, `FrequencySelector.cs` | Custom controls. |
+| | `SpectrumDisplay.cs`, `FrequencySelector.cs`, `SignalMeter.cs` | Custom controls. |
 
 ## Signal scanner (Scan/ + UI/Form1.Scanner.cs)
 - `Scan/ScanSettings.cs`: range, step, method, threshold (dB above noise floor), hold mode, lockouts; JSON in `%AppData%\RandySDR\scan-settings.json`.
 - `Scan/HopMeasurement.cs`: averaged 4096-FFT power, DC-spike mask, channel power, noise floor (25th percentile).
 - `Scan/SignalScanner.cs`: state machine; `Tick()` is called by a UI-thread timer (25 ms). Retunes via callback, waits for fresh USB buffers (`BuffersProcessed >= tune+2` and SettleMs), reads `ReceiverPipeline.LastIqData`. Locks onto the strongest armed, non-locked-out channel; released channels re-arm only after dropping below threshold-2 dB.
+- New scans wait at least one second from the first scanner tick and then require two fresh buffers before measuring or detecting, so initial tuner and bandwidth changes can settle. Resume and ordinary retunes still use the normal per-hop settling; editing a running scan does not restart the startup delay.
 - `UI/Form1.Scanner.cs`: scanner cards built in code from TableLayoutPanels, presets, log + CSV, lockout list, auto mode by band, audio muted while hopping (`_scanMuted`, applied in `UpdateDemodulatorSettings`). `UI/ScanGraph.cs` plots strength (dB grid, MHz axis, threshold line).
+- Squelch-link feature (`Form1.SquelchLink.cs`): optional link between audio squelch and scanner detection threshold. Linked mode uses a quiet scan hop to estimate in-channel noise floor; audio squelch = tracked floor + detection threshold + offset, with minimum separation from floor. Manual squelch remains active until a quiet hop is measured.
+- `UI/SignalMeter.cs`: custom control for visual signal strength meter with gradient fill and tick marks.
+- `UI/FrequencySelector.cs`: compact grouped GHz/MHz/kHz/Hz display; digit buttons, keyboard arrows and the mouse wheel adjust the corresponding frequency step. Wheel input targets the digit under the pointer without changing focus.
+- Device opening/configuration and gain discovery run on a background thread using a private wrapper; the UI reports progress and hands ownership to the receiver only after success. Closing during opening waits asynchronously for the driver call and releases the device before exiting.
+- RTL-SDR returns `-2` for an unchanged PPM correction and for unsupported offset tuning on R820T/R828D tuners. These are accepted only when driver readback confirms the requested PPM or disabled offset state; other configuration failures identify the affected settings.
+- Scan range and method remain editable during a scan. Valid edits rebuild the channel plan immediately; an invalid range leaves the previous plan running and displays a warning until corrected. Replanning resets sweep and learned-threshold state.
+- With automatic mode enabled, each named preset selects its documented AM, wide-FM, or narrow-FM mode when selected and at scan start; custom ranges use the first channel at start and the locked frequency thereafter. Unknown custom bands keep the current mode. Preset identities are persisted so overlapping bands retain the preset's mode; manual mode remains unchanged when automatic selection is off (except the existing CB and law-enforcement preset shortcuts).
 - Law enforcement VHF/UHF search presets use narrow FM, 1.25/6.25 kHz grids respectively, and the scanner's minimum 12.5 kHz detection window. The VHF scan plan excludes 162.400–162.550 MHz weather channels with a 50 kHz guard on each side; custom scans and the NOAA preset remain unaffected. Their selection is saved so the VHF airband overlap remains narrow FM when automatic mode is enabled. These broad ranges are not dedicated channel plans, and digital/trunked systems are not decoded.
 - `UI/Form1.Layout.cs` builds cards and uses `UI/PanelLayoutEngine.cs` to migrate legacy order and size settings. `UI/Form1.Dashboard.cs` owns the fixed toolbar, freeform scrollable workspace, built-in layouts, panel visibility, focus, locking, optional grid snapping, and layout application. `UI/DashboardResizeHandle.cs` handles right, bottom, and corner resizing. Cards have scrollable content viewports so smaller dimensions do not discard controls.
 - `UI/DashboardLayoutStore.cs` validates and atomically saves Custom 1 to `%AppData%\RandySDR\dashboard-layout.json`, including position, size, visibility, collapse state, and stacking order. The saved custom layout loads at startup; older `panel-layout.json` and `panel-sizes.json` files are retained for migration. Unknown panels are ignored, missing panels use defaults, and panels saved outside a smaller viewport are moved into view when possible. The window is clamped to the screen working area on load. Designer uses `AutoScaleMode.Dpi` at 144 dpi. Dark theme is set in `Program.cs`.
@@ -160,10 +171,8 @@ Run the WinForms interaction checks with `dotnet run --project Tests\PanelResize
 
 ## Known ideas & backlog
 
-- Bias-T checkbox with runtime on/off UI control.
 - Click-to-tune on the spectrum display.
-- Fully working scan UI with lockouts and presets enhancements.
-- Settings persistence beyond scan settings.
+- Settings persistence beyond scan settings (dashboard layout saved, but app-wide settings not yet persisted).
 - DSP unit-test project for demodulators/squelch logic.
 - Fix mojibake in some Debug strings in `RtlSdrWrapper.cs`.
 

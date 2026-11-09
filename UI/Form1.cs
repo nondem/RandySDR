@@ -66,7 +66,7 @@ namespace RandySDR
             // Default to 103.1 FM for easy testing
             numFrequency.Value = 103.1m;
             numSampleRate.Value = 2.4m; // 2.4 MSPS is optimal for FM broadcast
-            
+
             // Normalize numPpm TrackBar range to include -100 to 100
             if (numPpm.Maximum < 100) numPpm.Maximum = 100;
             if (numPpm.Minimum > -100) numPpm.Minimum = -100;
@@ -87,8 +87,9 @@ namespace RandySDR
             if (trackSquelch.Maximum < 100) trackSquelch.Maximum = 100;
             if (trackSquelch.Minimum > 0) trackSquelch.Minimum = 0;
 
-            // Start with low volume to prevent sudden loud noise on first startup
-            trackVolume.Value = Math.Clamp(5, trackVolume.Minimum, trackVolume.Maximum);
+            // Start at 1% to prevent sudden loud noise on first startup
+            trackVolume.Value = Math.Clamp(1, trackVolume.Minimum, trackVolume.Maximum);
+            lblVolume.Text = $"Volume: {trackVolume.Value}%";
             trackSquelch.Value = Math.Clamp(0, trackSquelch.Minimum, trackSquelch.Maximum);
 
             chkDeEmphasis.Checked = true;
@@ -104,7 +105,7 @@ namespace RandySDR
 
         private void UpdateControlsState(bool deviceOpen)
         {
-            btnOpen.Enabled = !deviceOpen;
+            btnOpen.Enabled = !deviceOpen && !_deviceOpening && _devices.Count > 0;
             btnClose.Enabled = deviceOpen;
             btnStart.Enabled = deviceOpen;
             btnStop.Enabled = false;
@@ -139,12 +140,22 @@ namespace RandySDR
             rdoDirectSamplingQ.Enabled = deviceOpen;
             chkSwapIQ.Enabled = deviceOpen;
             chkInvertDemod.Enabled = deviceOpen;
-            cmbDevices.Enabled = !deviceOpen;
+            cmbDevices.Enabled = !deviceOpen && !_deviceOpening;
             if (_chkLinkSquelch != null) ApplyLinkedSquelch();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            base.OnFormClosing(e);
+            if (e.Cancel) return;
+            if (_deviceOpening)
+            {
+                _closeAfterOpen = true;
+                lblStatus.Text = "Waiting for device opening to finish before closing...";
+                lblStatus.ForeColor = Color.Orange;
+                e.Cancel = true;
+                return;
+            }
             StopScan();
             _scanSettings.Save();
             timerSignalLevel.Stop();
@@ -152,7 +163,6 @@ namespace RandySDR
             _pipeline = null;
             _sdr?.CloseDevice();
 
-            base.OnFormClosing(e);
         }
 
         public List<DeviceInfo> GetDevices()
@@ -161,5 +171,10 @@ namespace RandySDR
         }
 
         private void Form1_Load(object sender, EventArgs e) => FitToScreen();
+
+        private void numFrequency_Load(object sender, EventArgs e)
+        {
+
+        }
     }
 }

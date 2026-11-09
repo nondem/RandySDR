@@ -256,33 +256,60 @@ namespace RandySDR
             bool biasTeeEnabled,
             int samplingMode)
         {
-            if (_nativeDevice == null || !_nativeDevice.IsOpen)
-                return false;
+            return ConfigureReceiveChain(sampleRate, centerFrequencyHz, tunerAgcEnabled, rtlAgcEnabled,
+                manualGainTenthdB, ppm, tunerBandwidthHz, offsetTuning, biasTeeEnabled, samplingMode, out _);
+        }
 
-            bool ok = true;
+        public bool ConfigureReceiveChain(
+            uint sampleRate,
+            uint centerFrequencyHz,
+            bool tunerAgcEnabled,
+            bool rtlAgcEnabled,
+            int manualGainTenthdB,
+            int ppm,
+            uint tunerBandwidthHz,
+            bool offsetTuning,
+            bool biasTeeEnabled,
+            int samplingMode,
+            out string error)
+        {
+            error = "";
+            if (_nativeDevice == null || !_nativeDevice.IsOpen)
+            {
+                error = "Device is not open.";
+                return false;
+            }
+
+            var failures = new List<string>();
+            void Check(bool success, string setting)
+            {
+                if (!success) failures.Add(setting);
+            }
 
             // Recommended sequence for RTL-SDR V4 behavior parity:
             // sample rate -> sampling path -> center freq -> gain/AGC -> side settings -> reset buffer.
-            ok &= _nativeDevice.SetSampleRate(sampleRate);
-            ok &= _nativeDevice.SetDirectSamplingMode(samplingMode);
-            ok &= _nativeDevice.SetCenterFrequency(centerFrequencyHz);
+            Check(_nativeDevice.SetSampleRate(sampleRate), "sample rate");
+            Check(_nativeDevice.SetDirectSamplingMode(samplingMode), "sampling mode");
+            Check(_nativeDevice.SetCenterFrequency(centerFrequencyHz), "frequency");
 
-            ok &= _nativeDevice.SetAgcMode(tunerAgcEnabled);
+            Check(_nativeDevice.SetAgcMode(tunerAgcEnabled), "tuner AGC");
             if (!tunerAgcEnabled)
             {
-                ok &= _nativeDevice.SetTunerGain(manualGainTenthdB);
+                Check(_nativeDevice.SetTunerGain(manualGainTenthdB), "tuner gain");
             }
 
-            ok &= _nativeDevice.SetRtlAgcMode(rtlAgcEnabled);
-            ok &= _nativeDevice.SetPpmCorrection(ppm);
-            ok &= _nativeDevice.SetTunerBandwidth(tunerBandwidthHz);
-            ok &= _nativeDevice.SetOffsetTuning(offsetTuning);
+            Check(_nativeDevice.SetRtlAgcMode(rtlAgcEnabled), "RTL AGC");
+            Check(_nativeDevice.SetPpmCorrection(ppm), "PPM correction");
+            Check(_nativeDevice.SetTunerBandwidth(tunerBandwidthHz), "tuner bandwidth");
+            Check(_nativeDevice.SetOffsetTuning(offsetTuning), "offset tuning");
 
             _biasTeeEnabled = biasTeeEnabled;
             _nativeDevice.SetBiasTee(biasTeeEnabled);
 
-            ok &= _nativeDevice.ResetBuffer();
-            return ok;
+            Check(_nativeDevice.ResetBuffer(), "buffer reset");
+            if (failures.Count == 0) return true;
+            error = $"Could not configure: {string.Join(", ", failures)}.";
+            return false;
         }
     }
 

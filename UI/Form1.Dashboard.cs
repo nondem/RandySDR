@@ -94,7 +94,9 @@ namespace RandySDR
         private void WrapDashboardContent(CardGroupBox card)
         {
             Control[] children = card.Controls.Cast<Control>().ToArray();
-            int minimumWidth = Math.Max(360, card.ClientSize.Width - card.Padding.Horizontal);
+            int minimumWidth = card == groupBox2
+                ? 360
+                : Math.Max(360, card.ClientSize.Width - card.Padding.Horizontal);
             int minimumHeight = Math.Max(60, _minimumCardHeights[card] - card.HeaderHeight - card.Padding.Vertical);
             foreach (var child in children.Where(c => c.Dock == DockStyle.None))
             {

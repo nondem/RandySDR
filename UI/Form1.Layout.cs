@@ -79,10 +79,14 @@ namespace RandySDR
             }
             groupBox1.Controls.Add(device);
 
-            label1.Location = new Point(12, groupBox2.HeaderHeight + 4);
-            numFrequency.Location = new Point(12, label1.Bottom + 2);
+            groupBox2.Controls.Remove(label1);
+            numFrequency.BackColor = groupBox2.BackColor;
+            groupBox2.BackColorChanged += (_, _) => numFrequency.BackColor = groupBox2.BackColor;
+            numFrequency.Location = new Point(12, groupBox2.HeaderHeight + 4);
             numFrequency.Width = Math.Max(numFrequency.MinimumSize.Width,
                 numFrequency.Controls.Cast<Control>().Max(control => control.Right) + 4);
+            numFrequency.Height = Math.Max(numFrequency.MinimumSize.Height,
+                numFrequency.Controls.Cast<Control>().Max(control => control.Bottom) + 4);
             groupBox2.Height = numFrequency.Bottom + 10;
 
             var gain = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };

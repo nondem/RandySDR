@@ -1,28 +1,31 @@
 using System;
 using System.ComponentModel;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace RandySDR
 {
-    public class FrequencySelector : UserControl
+    public class FrequencySelector : UserControl, IMessageFilter
     {
         private const int DigitCount = 10; // 1 GHz ... 1 Hz
         private const long HzPerMhz = 1_000_000;
-        private static readonly Color DisplayBackColor = Color.Black;
-        private static readonly Color DisplayForeColor = Color.FromArgb(0, 255, 80);
-        private static readonly Color DisplayDisabledForeColor = Color.FromArgb(0, 110, 35);
-        private static readonly Color LedLabelColor = Color.FromArgb(0, 150, 40);
-        private static readonly Color LedLabelDisabledColor = Color.FromArgb(90, 120, 90);
-        private static readonly Color ButtonBackColor = Color.FromArgb(22, 22, 22);
-        private static readonly Color ButtonBorderColor = Color.FromArgb(55, 140, 55);
+        private const int MouseWheelMessage = 0x020A;
+        private const int WheelDelta = 120;
+        private static readonly Color DisplayBackColor = Color.FromArgb(15, 19, 27);
+        private static readonly Color DisplayForeColor = Color.FromArgb(180, 236, 255);
+        private static readonly Color DisplayDisabledForeColor = Color.FromArgb(90, 110, 120);
+        private static readonly Color UnitLabelColor = Color.FromArgb(125, 165, 185);
+        private static readonly Color UnitLabelDisabledColor = Color.FromArgb(90, 100, 110);
 
-        private TextBox[] digitBoxes;
-        private Button[] upButtons;
-        private Button[] downButtons;
-        private Label[] groupSeparators;
-        private Label dotLabel;
-        private Label mhzLabel;
+        private TextBox[] digitBoxes = null!;
+        private Button[] upButtons = null!;
+        private Button[] downButtons = null!;
+        private Label[] groupSeparators = null!;
+        private Label[] unitLabels = null!;
+        private readonly ToolTip _digitToolTip = new();
+        private int _wheelRemainder;
+        private int _wheelDigit = -1;
         private decimal _value = 98.5m;
         private decimal _minimum = 0.000001m; // 1 Hz
         private decimal _maximum = 9000m;     // 9 GHz
@@ -61,15 +64,24 @@ namespace RandySDR
             set => _maximum = value;
         }
 
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public new bool Enabled
+        protected override void OnHandleCreated(EventArgs e)
         {
-            get => base.Enabled;
-            set
-            {
-                base.Enabled = value;
-                ApplyEnabledState();
-            }
+            base.OnHandleCreated(e);
+            Application.AddMessageFilter(this);
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            Application.RemoveMessageFilter(this);
+            base.OnHandleDestroyed(e);
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            _wheelDigit = -1;
+            _wheelRemainder = 0;
+            ApplyEnabledState();
         }
 
         public FrequencySelector()
@@ -79,26 +91,25 @@ namespace RandySDR
 
         private void InitializeControl()
         {
-            Size = new Size(700, 114);
-            MinimumSize = new Size(640, 110);
-            BackColor = SystemColors.Control;
+            BackColor = CardGroupBox.ActiveCardColor;
             DoubleBuffered = true;
 
             digitBoxes = new TextBox[DigitCount];
             upButtons = new Button[DigitCount];
             downButtons = new Button[DigitCount];
             groupSeparators = new Label[3];
+            unitLabels = new Label[4];
 
             int startX = 10;
-            int digitWidth = 38;
-            using var digitMeasureBox = new TextBox { Font = new Font("Consolas", 17, FontStyle.Bold), BorderStyle = BorderStyle.FixedSingle };
+            int digitWidth = 32;
+            using var digitMeasureBox = new TextBox { Font = new Font("Consolas", 16, FontStyle.Bold), BorderStyle = BorderStyle.FixedSingle };
             int digitHeight = digitMeasureBox.PreferredHeight;
-            int buttonHeight = 24;
+            int buttonHeight = 19;
             int spacing = 3;
-            int groupGap = 16;
-            int topMargin = 4;
-            int topGap = 4;
-            int bottomGap = 8;
+            int groupGap = 12;
+            int topMargin = 2;
+            int topGap = 2;
+            int bottomGap = 2;
 
             for (int i = 0; i < DigitCount; i++)
             {
@@ -112,10 +123,11 @@ namespace RandySDR
                     Location = new Point(xPos, topMargin),
                     Size = new Size(digitWidth, buttonHeight),
                     Text = "▲",
-                    Font = new Font("Segoe UI Symbol", 9f, FontStyle.Regular),
+                    Font = new Font("Segoe UI Symbol", 7f, FontStyle.Regular),
                     TextAlign = ContentAlignment.MiddleCenter,
                     TabStop = false,
                     FlatStyle = FlatStyle.Standard,
+                    AccessibleName = $"Increase {GetMultiplier(i) * HzPerMhz:0} Hz digit",
                     Tag = i
                 };
                 upButtons[i].UseCompatibleTextRendering = true;
@@ -126,7 +138,7 @@ namespace RandySDR
                 {
                     Location = new Point(xPos, topMargin + buttonHeight + topGap),
                     Size = new Size(digitWidth, digitHeight),
-                    Font = new Font("Consolas", 17, FontStyle.Bold),
+                    Font = new Font("Consolas", 16, FontStyle.Bold),
                     TextAlign = HorizontalAlignment.Center,
                     MaxLength = 1,
                     Text = "0",
@@ -136,6 +148,9 @@ namespace RandySDR
                     ForeColor = DisplayForeColor,
                     ShortcutsEnabled = false
                 };
+                digitBoxes[i].AccessibleName = $"{GetMultiplier(i) * HzPerMhz:0} Hz digit";
+                digitBoxes[i].AccessibleDescription = "Scroll or use the arrow keys to tune this digit.";
+                _digitToolTip.SetToolTip(digitBoxes[i], "Scroll or use the arrow keys to tune this digit");
                 digitBoxes[i].KeyPress += DigitBox_KeyPress;
                 digitBoxes[i].TextChanged += DigitBox_TextChanged;
                 digitBoxes[i].Enter += DigitBox_Enter;
@@ -147,10 +162,11 @@ namespace RandySDR
                     Location = new Point(xPos, topMargin + buttonHeight + topGap + digitHeight + bottomGap),
                     Size = new Size(digitWidth, buttonHeight),
                     Text = "▼",
-                    Font = new Font("Segoe UI Symbol", 9f, FontStyle.Regular),
+                    Font = new Font("Segoe UI Symbol", 7f, FontStyle.Regular),
                     TextAlign = ContentAlignment.MiddleCenter,
                     TabStop = false,
                     FlatStyle = FlatStyle.Standard,
+                    AccessibleName = $"Decrease {GetMultiplier(i) * HzPerMhz:0} Hz digit",
                     Tag = i
                 };
                 downButtons[i].UseCompatibleTextRendering = true;
@@ -165,10 +181,10 @@ namespace RandySDR
                 groupSeparators[s] = new Label
                 {
                     AutoSize = false,
-                    Size = new Size(12, digitHeight),
-                    Location = new Point(digitBoxes[d].Right + 2, topMargin + buttonHeight + topGap),
+                    Size = new Size(groupGap, digitHeight),
+                    Location = new Point(digitBoxes[d].Right + 1, topMargin + buttonHeight + topGap),
                     Text = ".",
-                    Font = new Font("Consolas", 18, FontStyle.Bold),
+                    Font = new Font("Consolas", 16, FontStyle.Bold),
                     TextAlign = ContentAlignment.MiddleCenter,
                     ForeColor = DisplayForeColor,
                     BackColor = Color.Transparent
@@ -176,32 +192,38 @@ namespace RandySDR
                 Controls.Add(groupSeparators[s]);
             }
 
-            dotLabel = new Label
+            string[] units = { "GHz", "MHz", "kHz", "Hz" };
+            int[] firstDigits = { 0, 1, 4, 7 };
+            int[] lastDigits = { 0, 3, 6, 9 };
+            for (int i = 0; i < units.Length; i++)
             {
-                Location = new Point(startX, topMargin + buttonHeight + topGap + digitHeight + bottomGap + buttonHeight + 4),
-                Size = new Size(560, 18),
-                Text = "GHz                 MHz                 kHz                 Hz",
-                Font = new Font("Consolas", 9f, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = LedLabelColor,
-                BackColor = Color.Transparent
-            };
-            Controls.Add(dotLabel);
+                unitLabels[i] = new Label
+                {
+                    Text = units[i],
+                    Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    ForeColor = UnitLabelColor,
+                    BackColor = Color.Transparent
+                };
+                int groupWidth = digitBoxes[lastDigits[i]].Right - digitBoxes[firstDigits[i]].Left;
+                int labelWidth = Math.Max(groupWidth, unitLabels[i].GetPreferredSize(Size.Empty).Width);
+                unitLabels[i].Location = new Point(digitBoxes[firstDigits[i]].Left + (groupWidth - labelWidth) / 2,
+                    downButtons[0].Bottom + 2);
+                unitLabels[i].Size = new Size(labelWidth, 18);
+                Controls.Add(unitLabels[i]);
+            }
 
-            mhzLabel = new Label
-            {
-                Location = new Point(575, topMargin + buttonHeight + topGap + digitHeight + 6),
-                Size = new Size(110, 22),
-                Text = "MHz tuning",
-                Font = new Font("Consolas", 9f, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = LedLabelColor,
-                BackColor = Color.Transparent
-            };
-            Controls.Add(mhzLabel);
+            MinimumSize = new Size(digitBoxes[DigitCount - 1].Right + 4, unitLabels[0].Bottom + 2);
+            Size = MinimumSize;
 
             ApplyEnabledState();
             UpdateDisplay();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _digitToolTip.Dispose();
+            base.Dispose(disposing);
         }
 
         private void ApplyEnabledState()
@@ -231,9 +253,53 @@ namespace RandySDR
             foreach (var separator in groupSeparators)
                 separator.ForeColor = base.Enabled ? DisplayForeColor : DisplayDisabledForeColor;
 
-            var labelColor = base.Enabled ? LedLabelColor : LedLabelDisabledColor;
-            dotLabel.ForeColor = labelColor;
-            mhzLabel.ForeColor = labelColor;
+            foreach (var label in unitLabels)
+                label.ForeColor = base.Enabled ? UnitLabelColor : UnitLabelDisabledColor;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(Point point);
+
+        bool IMessageFilter.PreFilterMessage(ref Message m)
+        {
+            if (m.Msg != MouseWheelMessage || !Enabled || !Visible) return false;
+
+            Point screenPoint = Cursor.Position;
+            Control? hovered = Control.FromChildHandle(WindowFromPoint(screenPoint));
+            if (hovered == null || (hovered != this && !Contains(hovered)))
+            {
+                _wheelDigit = -1;
+                _wheelRemainder = 0;
+                return false;
+            }
+
+            Point point = PointToClient(screenPoint);
+            int index = Array.FindIndex(digitBoxes, box => point.X >= box.Left && point.X < box.Right
+                && point.Y >= upButtons[0].Top && point.Y < downButtons[0].Bottom);
+            if (index < 0)
+            {
+                _wheelDigit = -1;
+                _wheelRemainder = 0;
+                return false;
+            }
+
+            if (_wheelDigit != index)
+            {
+                _wheelDigit = index;
+                _wheelRemainder = 0;
+            }
+            _wheelRemainder += (short)(((long)m.WParam >> 16) & 0xffff);
+            while (_wheelRemainder >= WheelDelta)
+            {
+                IncrementDigit(index);
+                _wheelRemainder -= WheelDelta;
+            }
+            while (_wheelRemainder <= -WheelDelta)
+            {
+                DecrementDigit(index);
+                _wheelRemainder += WheelDelta;
+            }
+            return true;
         }
 
         private void UpButton_Click(object? sender, EventArgs e)
