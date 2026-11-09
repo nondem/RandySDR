@@ -56,6 +56,18 @@ UI timer (50 ms) --> ReceiverPipeline.LastIqData --> SpectrumAnalyzer (FFT) --> 
 - `UI/DashboardLayoutStore.cs` validates and atomically saves Custom 1 to `%AppData%\RandySDR\dashboard-layout.json`, including position, size, visibility, collapse state, and stacking order. The saved custom layout loads at startup; older `panel-layout.json` and `panel-sizes.json` files are retained for migration. Unknown panels are ignored, missing panels use defaults, and panels saved outside a smaller viewport are moved into view when possible. The window is clamped to the screen working area on load. Designer uses `AutoScaleMode.Dpi` at 144 dpi. Dark theme is set in `Program.cs`.
 - Scanner is unverified on live hardware; the spectrum timer remains active during scanning to keep the display updated.
 
+## Scan robot (Robot/ + UI/Form1.Robot.cs)
+
+Implements `sdr_voice_communication_automation_system_plan.md` (rev 2). Every feature is off by default; manual lockout, Resume and Stop always win.
+
+- `ReceiverPipeline.AudioTap(float[], bool squelchOpen)` delivers pre-squelch demodulated audio from the DSP thread (called inside try/catch). `RobotController` forwards it to `ClipRecorder`, which writes mono 16-bit 48 kHz WAVs to `%UserProfile%\RandySDR\Clips`, trims trailing silence, and splits on squelch gaps.
+- Completed clips go to an analysis thread (`ClipAnalyzer`: energy/spectral VAD, classes Carrier/Tone/Noise/Voice/Uncertain), are stored in SQLite (`RobotStore`, `%AppData%\RandySDR\robot.db` or the layout directory; `Clips` table, `Lockouts`, decision log), and Voice/Uncertain clips continue to an AI thread: `WhisperTranscriber` (Whisper.net + CUDA, model downloaded to `%AppData%\RandySDR\models`) then `OllamaClient` (default `qwen3.5:35b-a3b-q4_K_M` at `http://localhost:11434`). Ollama/Whisper failures leave clips "unclassified" and never affect scanning.
+- `LockoutPolicy` evaluates junk clips; modes are Off, SuggestOnly (default) and Auto. Lockouts are keyed by frequency rounded to the scan step and consulted through `SignalScanner.ExtraLockout`. Audio retention: 30 days voice, 3 days carrier/noise (`RobotStore.PurgeAudio`).
+- Config: `%AppData%\RandySDR\robot-config.json` (`RobotConfig`). UI: "Scan Robot" card with status, recent clips and lockout suggestions; a 500 ms `_robotTimer` handles early-skip resume and list refresh.
+- Settings: the toolbar "Settings..." button opens `UI\RobotSettingsForm.cs` (tabs for Ollama model/temperature/context/timeout/keep-alive/extra prompt, Whisper model/language/threshold/threads/vocabulary hint, and clip folder/retention/limits/early-skip). OK saves `RobotConfig`, calls `RobotController.ApplyConfig()`, and `WhisperTranscriber.Reload()` when the model changed.
+- Threads: recorder (DSP tap, no I/O on it beyond a queue), analysis thread, AI thread. Dispose the controller before the pipeline.
+- Checks: `dotnet run --project Tests\RobotChecks\RobotChecks.csproj` (synthetic audio; the VAD is untested on real RF audio).
+
 ## Threading rules
 
 - Never do DSP or audio in the USB read thread. Never touch UI controls from the DSP thread.

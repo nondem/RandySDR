@@ -410,8 +410,13 @@ namespace RandySDR
             if (release) Resume();
         }
 
+        /// <summary>Optional second lockout source (the robot's auto-lockouts). Called on the UI thread; must be cheap.</summary>
+        public Func<double, bool>? ExtraLockout { get; set; }
+
         private bool IsLockedOut(double hz)
         {
+            if (ExtraLockout?.Invoke(hz) == true) return true;
+
             // Pre-calculate the tolerance to avoid repeated computation
             double tol = Math.Max(_usedStep[0] / 2, 5_000);
             

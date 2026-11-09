@@ -88,6 +88,7 @@ namespace RandySDR
                     _spectrumTimer.Start();
 
                 _pipeline = new ReceiverPipeline((int)sampleRate);
+                _robot?.AttachPipeline(_pipeline);
                 UpdateDemodulatorSettings();
 
                 _sdr = openingDevice;
@@ -99,6 +100,7 @@ namespace RandySDR
             }
             catch (Exception ex)
             {
+                _robot?.AttachPipeline(null);
                 _pipeline?.Dispose();
                 _pipeline = null;
                 _spectrumTimer.Stop();
@@ -135,6 +137,7 @@ namespace RandySDR
             StopScan();
             timerSignalLevel.Stop();
             
+            _robot?.AttachPipeline(null);
             _pipeline?.Dispose();
             _pipeline = null;
             _noiseFloorDb = float.NaN;

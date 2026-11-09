@@ -34,6 +34,22 @@ namespace RandySDR
         public int BuffersDropped => _usbBuffer.TotalBuffersDropped;
         public bool IsRunning => _dspRunning;
 
+        private volatile Action<float[], bool>? _audioTap;
+
+        /// <summary>
+        /// Receives each block of pre-squelch audio (48 kHz mono float) plus the squelch state, on the DSP thread.
+        /// The handler must copy/enqueue and return immediately. Set to null to turn the tap (and its capture cost) off.
+        /// </summary>
+        public Action<float[], bool>? AudioTap
+        {
+            get => _audioTap;
+            set
+            {
+                _audioTap = value;
+                _demodulator.CaptureCleanAudio = value != null;
+            }
+        }
+
         /// <summary>
         /// Drop all queued I/Q and buffered audio from before a retune and reset demodulator
         /// transients, so nothing from the old frequency is heard on the new one.
@@ -48,7 +64,7 @@ namespace RandySDR
         /// <summary>Replace the demodulator (e.g. after a sample rate change). Returns the new instance so the caller can re-apply settings.</summary>
         public FmDemodulator ReplaceDemodulator(int sampleRateHz)
         {
-            _demodulator = new FmDemodulator(sampleRateHz, AudioSampleRate);
+            _demodulator = new FmDemodulator(sampleRateHz, AudioSampleRate) { CaptureCleanAudio = _audioTap != null };
             return _demodulator;
         }
 
@@ -100,6 +116,17 @@ namespace RandySDR
                 float[]? audio = _demodulator.Demodulate(iq);
                 if (audio is { Length: > 0 })
                     _audio.AddSamples(audio);
+
+                var tap = _audioTap;
+                if (tap != null)
+                {
+                    var clean = _demodulator.LastCleanAudio;
+                    if (clean is { Length: > 0 })
+                    {
+                        try { tap(clean, _demodulator.LastCleanSquelchOpen); }
+                        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Audio tap failed: {ex.Message}"); }
+                    }
+                }
             }
         }
 

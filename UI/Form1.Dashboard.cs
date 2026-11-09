@@ -41,7 +41,9 @@ namespace RandySDR
             _lockLayoutButton.Click += (_, _) => SetDashboardLocked(!_dashboardLocked);
             var snap = new CheckBox { Text = "Snap to grid", AutoSize = true, Checked = true, Margin = new Padding(8) };
             snap.CheckedChanged += (_, _) => _dashboardSnap = snap.Checked;
-            toolbar.Controls.AddRange(new Control[] { menu, _layoutChoice, save, reset, _lockLayoutButton, snap });
+            var settings = new Button { Text = "Settings...", AutoSize = true };
+            settings.Click += (_, _) => OpenRobotSettings();
+            toolbar.Controls.AddRange(new Control[] { menu, _layoutChoice, save, reset, _lockLayoutButton, snap, settings });
             return toolbar;
         }
 

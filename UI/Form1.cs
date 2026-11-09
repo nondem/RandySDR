@@ -159,6 +159,10 @@ namespace RandySDR
             StopScan();
             _scanSettings.Save();
             timerSignalLevel.Stop();
+            _robotTimer.Stop();
+            _robot?.AttachPipeline(null);
+            _robot?.Dispose();
+            _robot = null;
             _pipeline?.Dispose();
             _pipeline = null;
             _sdr?.CloseDevice();

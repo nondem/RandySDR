@@ -76,7 +76,8 @@ internal static class Program
         }
         finally
         {
-            Directory.Delete(directory, false);
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            Directory.Delete(directory, true);
         }
     }
 

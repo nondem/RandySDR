@@ -17,6 +17,11 @@
             {
                 components.Dispose();
             }
+            if (disposing)
+            {
+                _robotTimer.Stop();
+                _robot?.Dispose();
+            }
             base.Dispose(disposing);
         }
 

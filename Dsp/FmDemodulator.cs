@@ -135,6 +135,17 @@
         public float ChannelDb => _channelDb;
         public bool SquelchOpen => _sqOpen;
 
+        /// <summary>When true, Demodulate also keeps the audio from before squelch/volume for the recorder tap.</summary>
+        public volatile bool CaptureCleanAudio;
+        private readonly List<float> _cleanAudio = new();
+        private float[]? _lastClean;
+        private bool _lastCleanSquelchOpen = true;
+
+        /// <summary>Pre-squelch, pre-volume audio of the last Demodulate call (DSP thread only). Null when capture is off.</summary>
+        public float[]? LastCleanAudio => _lastClean;
+        /// <summary>True when the squelch was open at the end of the last Demodulate call (always true with no squelch set).</summary>
+        public bool LastCleanSquelchOpen => _lastCleanSquelchOpen;
+
         private volatile float _channelDb = -120f;
         private float _chanPower, _sqGain;
         private bool _sqOpen;
@@ -304,6 +315,10 @@
                         _ => ProcessWideFm(fmDemod)
                     };
 
+                    bool capture = CaptureCleanAudio;
+                    if (capture)
+                        _cleanAudio.Add(Math.Clamp(filtered, -1f, 1f));
+
                     // Squelch: gate on in-channel power (not wideband power) with hysteresis, hang time and a soft ramp
                     filtered *= Volume * UpdateSquelch(I, Q);
 
@@ -316,6 +331,17 @@
 
                     audioSamples.Add(filtered);
                 }
+            }
+
+            if (CaptureCleanAudio)
+            {
+                _lastClean = _cleanAudio.ToArray();
+                _lastCleanSquelchOpen = SquelchThresholdDb == null || _sqOpen;
+                _cleanAudio.Clear();
+            }
+            else
+            {
+                _lastClean = null;
             }
 
             // Update signal level (smoothed and normalized)

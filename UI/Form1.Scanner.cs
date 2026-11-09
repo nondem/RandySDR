@@ -108,8 +108,9 @@ namespace RandySDR
             _cardLog = AddScanCard("Detection Log", ListSection(null, _lstLog, btnClearLog, btnSaveLog), 25);
             _cardLock = AddScanCard("Locked-out Frequencies", ListSection("Skipped by the scanner", _lstLockouts, btnRemoveLockout, btnClearLockouts), 25);
             _wideCards.UnionWith(new[] { _cardRange, _cardDetect, _cardBehave });
+            BuildRobotCard();
             HookCardCollapse(groupBox1, groupBox2, groupBox3, groupBox4, groupBoxAudio, groupBox6,
-                _cardRange, _cardDetect, _cardBehave, _cardControl, _cardGraph, _cardLog, _cardLock);
+                _cardRange, _cardDetect, _cardBehave, _cardControl, _cardGraph, _cardLog, _cardLock, _cardRobot);
 
             LoadScanSettingsToUi();
             if (!new DashboardLayoutStore(LayoutDirectory).Exists)
@@ -168,7 +169,7 @@ namespace RandySDR
             content.Dock = DockStyle.Fill;
             card.Controls.Add(content);
             int height = weight > 0
-                ? (title == "Activity Graph" ? 320 : 220)
+                ? (title == "Activity Graph" ? 320 : title == "Scan Robot" ? 560 : 220)
                 : content.GetPreferredSize(new Size(Math.Max(620, numFrequency.MinimumSize.Width), 0)).Height + card.HeaderHeight + card.Padding.Vertical + 12;
             AddWorkspaceCard(card, "scan-" + title.ToLowerInvariant().Replace(' ', '-'), height);
             return card;
@@ -439,6 +440,7 @@ namespace RandySDR
             sc.SignalLocked += OnScanLocked;
             sc.Updated += OnScanUpdated;
             sc.QuietChannelMeasured += OnQuietChannelMeasured;
+            _robot?.AttachScanner(sc);
             return sc;
         }
 
@@ -448,6 +450,7 @@ namespace RandySDR
                 return;
 
             bool wasLocked = _scanner.State == ScanState.Locked;
+            _robot?.EndRecording("scan-stopped");
             _scanner.Stop();
             _scanTimer.Stop();
             _scanRangeError = null;
