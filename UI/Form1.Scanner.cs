@@ -7,6 +7,7 @@ namespace RandySDR
         private SignalScanner? _scanner;
         private readonly System.Windows.Forms.Timer _scanTimer = new() { Interval = 25 };
         private bool _scanMuted; // true while hopping between channels so the user does not hear static
+        private bool _robotScanActive;
         private bool _loadingScanUi;
         private string? _scanRangeError;
         private decimal _scanOriginalMHz;
@@ -20,7 +21,7 @@ namespace RandySDR
         private Label _lblThreshold = null!, _lblScanStatus = null!;
         private CheckBox _chkAutoMode = null!, _chkLog = null!, _chkAutoThreshold = null!;
         private NumericUpDown _numAutoTrim = null!;
-        private Button _btnScanToggle = null!, _btnResume = null!, _btnLockout = null!;
+        private Button _btnScanToggle = null!, _btnRobotScan = null!, _btnResume = null!, _btnLockout = null!;
         private ScanGraph _scanGraph = null!;
         private ListView _lstLog = null!;
         private ListBox _lstLockouts = null!;
@@ -34,7 +35,7 @@ namespace RandySDR
             ("FM broadcast 88.1-107.9 / 200 kHz", 88.1, 107.9, 200, DemodulationMode.WideFm),
             ("Airband 118-137 / 25 kHz", 118, 137, 25, DemodulationMode.Am),
             ("NOAA weather 162.400-162.550 / 25 kHz", 162.4, 162.55, 25, DemodulationMode.NarrowFm),
-            ("Marine VHF 156-162.6 / 25 kHz", 156, 162.6, 25, DemodulationMode.NarrowFm),
+            ("Marine VHF 156-162.4 / 25 kHz", 156, 162.4, 25, DemodulationMode.NarrowFm),
             ("2 m ham 144-148 / 5 kHz", 144, 148, 5, DemodulationMode.NarrowFm),
             ("CB US standard 40 channels (AM)", 26.965, 27.405, 10, DemodulationMode.Am),
             ("70 cm ham 430-450 / 5 kHz", 430, 450, 5, DemodulationMode.NarrowFm),
@@ -62,6 +63,8 @@ namespace RandySDR
             thresholdTip.SetToolTip(_numAutoTrim, "Nudges the automatic threshold. Negative = more sensitive, positive = fewer false detections.");
             _trackThreshold = new TrackBar { Dock = DockStyle.Fill, AutoSize = false, Height = 32, Minimum = 3, Maximum = 40, TickFrequency = 3, Value = 8, Margin = new Padding(0, 0, 0, 0) };
             _numHold = NewNumeric(1, 0.5m, 120m, 0.5m);
+            var holdTip = new ToolTip();
+            holdTip.SetToolTip(_numHold, "Time to wait after signal drops before resuming scanning. In 'Stay until signal drops' mode, the scanner will force release after 15 seconds even if signal is still present (prevents getting stuck on noisy frequencies).");
             _numSettle = NewNumeric(0, 40m, 1000m, 10m);
             _chkAutoMode = new CheckBox { Text = "Auto-select mode by band", AutoSize = true, Margin = new Padding(0, 2, 16, 2) };
             _chkLog = new CheckBox { Text = "Log detections", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
@@ -69,7 +72,8 @@ namespace RandySDR
             checks.Controls.Add(_chkAutoMode);
             checks.Controls.Add(_chkLog);
 
-            _btnScanToggle = NewButton("Start scan");
+            _btnScanToggle = NewButton("Start normal scan");
+            _btnRobotScan = NewButton("Start robot scan");
             _btnResume = NewButton("Resume");
             _btnLockout = NewButton("Lock out signal");
             _lblScanStatus = new Label
@@ -103,7 +107,9 @@ namespace RandySDR
             _cardBehave = AddScanCard("Behaviour", Stack(
                 FieldRow(("When a signal is found", _cmbHold), ("Hold / drop time (s)", _numHold), ("Settle time (ms)", _numSettle)),
                 checks));
-            _cardControl = AddScanCard("Scan Control", Stack(ButtonRow(_btnScanToggle, _btnResume, _btnLockout), _lblScanStatus));
+            _cardControl = AddScanCard("Scan Control", Stack(
+                ButtonRow(_btnScanToggle, _btnRobotScan),
+                ButtonRow(_btnResume, _btnLockout), _lblScanStatus));
             _cardGraph = AddScanCard("Activity Graph", _scanGraph, 50);
             _cardLog = AddScanCard("Detection Log", ListSection(null, _lstLog, btnClearLog, btnSaveLog), 25);
             _cardLock = AddScanCard("Locked-out Frequencies", ListSection("Skipped by the scanner", _lstLockouts, btnRemoveLockout, btnClearLockouts), 25);
@@ -141,7 +147,8 @@ namespace RandySDR
             _chkAutoThreshold.CheckedChanged += (_, _) => ReadScanSettingsFromUi();
             _numAutoTrim.ValueChanged += (_, _) => ReadScanSettingsFromUi();
 
-            _btnScanToggle.Click += (_, _) => ToggleScan();
+            _btnScanToggle.Click += (_, _) => ToggleScan(false);
+            _btnRobotScan.Click += (_, _) => ToggleScan(true);
             _btnResume.Click += (_, _) => _scanner?.Resume();
             _btnLockout.Click += (_, _) => LockOutCurrent();
             btnClearLog.Click += (_, _) => { _scanLog.Clear(); _lstLog.Items.Clear(); UpdateCardStates(); };
@@ -338,6 +345,8 @@ namespace RandySDR
             _numHold.Enabled = s.Hold != HoldMode.UntilResumed;
             if (running && changed && _scanRangeError == null)
             {
+                if (_robotScanActive && _scanner!.State == ScanState.Locked)
+                    _robot?.EndRecording("scan-replanned");
                 if (!_scanner!.Start(out string error))
                 {
                     StopScan();
@@ -398,11 +407,18 @@ namespace RandySDR
                 SelectModeForBand(p.Start);
         }
 
-        private void ToggleScan()
+        private void ToggleScan(bool useRobot)
         {
             if (_scanner != null && _scanner.State != ScanState.Idle)
             {
-                StopScan();
+                if (_robotScanActive == useRobot) StopScan();
+                return;
+            }
+
+            if (useRobot && _robot == null)
+            {
+                MessageBox.Show(this, "The scan robot is unavailable. You can still start a normal scan.", "Scanner",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -416,9 +432,14 @@ namespace RandySDR
             ReadScanSettingsFromUi();
             _scanner ??= CreateScanner();
             _scanOriginalMHz = numFrequency.Value;
+            _robotScanActive = useRobot;
+            if (useRobot) _robot!.AttachScanner(_scanner);
 
             if (!_scanner.Start(out string error))
             {
+                if (useRobot) _robot!.DetachScanner(_scanner);
+                _robotScanActive = false;
+                UpdateScanUi();
                 MessageBox.Show(error, "Scanner", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -440,7 +461,6 @@ namespace RandySDR
             sc.SignalLocked += OnScanLocked;
             sc.Updated += OnScanUpdated;
             sc.QuietChannelMeasured += OnQuietChannelMeasured;
-            _robot?.AttachScanner(sc);
             return sc;
         }
 
@@ -450,8 +470,9 @@ namespace RandySDR
                 return;
 
             bool wasLocked = _scanner.State == ScanState.Locked;
-            _robot?.EndRecording("scan-stopped");
             _scanner.Stop();
+            if (_robotScanActive) _robot?.DetachScanner(_scanner);
+            _robotScanActive = false;
             _scanTimer.Stop();
             _scanRangeError = null;
             RefreshScanMute();
@@ -523,7 +544,10 @@ namespace RandySDR
             bool running = state != ScanState.Idle;
 
             ApplyLinkedSquelch();
-            _btnScanToggle.Text = running ? "Stop scan" : "Start scan";
+            _btnScanToggle.Text = running && !_robotScanActive ? "Stop normal scan" : "Start normal scan";
+            _btnRobotScan.Text = running && _robotScanActive ? "Stop robot scan" : "Start robot scan";
+            _btnScanToggle.Enabled = !running || !_robotScanActive;
+            _btnRobotScan.Enabled = _robot != null && (!running || _robotScanActive);
             _btnResume.Enabled = state == ScanState.Locked;
             _btnLockout.Enabled = true;
             foreach (Control c in new Control[] { _numStart, _numStop, _numStep, _cmbMethod, _cmbPreset })
@@ -532,7 +556,7 @@ namespace RandySDR
 
             if (sc == null || !running)
             {
-                _lblScanStatus.Text = "Idle - press Start scan";
+                _lblScanStatus.Text = "Idle - choose normal or robot scan";
                 _lblScanStatus.ForeColor = Color.FromArgb(150, 156, 170);
                 if (sc != null) _scanGraph.SetData(sc.Strength, sc.ChannelHz, -1, false);
                 return;

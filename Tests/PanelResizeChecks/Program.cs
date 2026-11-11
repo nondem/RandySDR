@@ -14,6 +14,7 @@ internal static class Program
         if (args.Contains("--scan-mode-only"))
         {
             CheckLiveScanRange();
+            CheckRobotScanModes();
             Console.WriteLine("Live scan range and mode checks passed.");
             return;
         }
@@ -21,6 +22,7 @@ internal static class Program
         CheckDriverConfigurationResults();
         CheckDeviceOpening();
         CheckLiveScanRange();
+        CheckRobotScanModes();
         if (Environment.GetEnvironmentVariable("RANDYSDR_HARDWARE_CHECK") == "1")
             CheckRealDeviceOpening();
         string directory = Path.Combine(Path.GetTempPath(), "RandySDR-dashboard-check-" + Guid.NewGuid());
@@ -397,7 +399,7 @@ internal static class Program
             var preset = Field<ComboBox>(form, "_cmbPreset");
             preset.SelectedIndex = 1;
             am.Checked = true;
-            Call(form, "ToggleScan");
+            Call(form, "ToggleScan", false);
             var scanner = Field<SignalScanner>(form, "_scanner");
             var range = FindCard(form, "scan-scan-range");
             Check(scanner.State == ScanState.Scanning && range.Active && start.Enabled && stop.Enabled && step.Enabled && preset.Enabled,
@@ -466,6 +468,93 @@ internal static class Program
         {
             foreach (string file in Directory.GetFiles(directory)) File.Delete(file);
             Directory.Delete(directory);
+        }
+    }
+
+    private static void CheckRobotScanModes()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "RandySDR-scan-modes-" + Guid.NewGuid());
+        Directory.CreateDirectory(directory);
+        try
+        {
+            using (var form = CreateForm(directory))
+            {
+                var pipeline = new ReceiverPipeline(2_400_000);
+                SetField(form, "_pipeline", pipeline);
+                var robot = Field<RobotController>(form, "_robot");
+                robot.Config.RecordClips = true;
+                robot.Config.EarlySkip = true;
+                robot.Config.SpeechEarlySkip = true;
+                robot.Config.LockoutMode = AutoLockoutMode.Auto;
+                robot.Config.ClipFolder = Path.Combine(directory, "clips");
+                robot.Config.MinFreeGb = 0;
+                robot.AttachPipeline(pipeline);
+                Call(form, "UpdateControlsState", true);
+                Field<Button>(form, "btnStop").Enabled = true;
+                var normalButton = Field<Button>(form, "_btnScanToggle");
+                var robotButton = Field<Button>(form, "_btnRobotScan");
+                var preset = Field<ComboBox>(form, "_cmbPreset");
+                preset.SelectedIndex = 5;
+
+                double hz = 156_000_000;
+                var settings = Field<ScanSettings>(form, "_scanSettings");
+                long key = LockoutPolicy.ChannelKey(hz, settings.StepKHz * 1000);
+                robot.Store.AddLockout(key, hz, "test", "active", DateTime.UtcNow);
+                robot.RefreshLockoutCache();
+
+                Check(pipeline.AudioTap == null, "Robot audio capture must be off before a scan starts.");
+                normalButton.PerformClick();
+                var scanner = Field<SignalScanner>(form, "_scanner");
+                Check(scanner.State == ScanState.Scanning && pipeline.AudioTap == null && scanner.ExtraLockout == null,
+                    "Normal scanning must bypass robot capture and lockouts.");
+                settings.LockoutsMHz.Add(hz / 1e6);
+                bool manualLockout = (bool)typeof(SignalScanner).GetMethod("IsLockedOut", PrivateInstance)!.Invoke(scanner, new object[] { hz })!;
+                settings.LockoutsMHz.Remove(hz / 1e6);
+                Check(manualLockout, "Normal scanning must continue to honor manual lockouts.");
+                Check(normalButton.Text == "Stop normal scan" && !robotButton.Enabled,
+                    "The active normal scan must show its stop button and disable robot start.");
+                robot.ApplyConfig();
+                Check(pipeline.AudioTap == null, "Changing robot settings must not enable capture during a normal scan.");
+                Call(scanner, "Lock", 0, 15d);
+                Check(!robot.Recorder.IsRecording, "Normal scan locks must not start robot recording.");
+                robotButton.PerformClick();
+                Check(scanner.State == ScanState.Locked, "The inactive robot button must not stop or change a normal scan.");
+                normalButton.PerformClick();
+                Check(scanner.State == ScanState.Idle, "The active normal scan button must stop the scan.");
+
+                robotButton.PerformClick();
+                Check(scanner.State == ScanState.Scanning && pipeline.AudioTap != null
+                    && scanner.ExtraLockout != null && scanner.ExtraLockout(hz),
+                    "Robot scanning must use configured capture and robot lockouts.");
+                Check(robotButton.Text == "Stop robot scan" && !normalButton.Enabled,
+                    "The active robot scan must show its stop button and disable normal start.");
+                Call(scanner, "Lock", 0, 15d);
+                Check(robot.Recorder.IsRecording, "Robot scan locks must start recording when configured.");
+                var step = Field<NumericUpDown>(form, "_numStep");
+                step.Value += 1;
+                Check(scanner.State == ScanState.Scanning && !robot.Recorder.IsRecording && pipeline.AudioTap != null,
+                    "Replanning a locked robot scan must stop the previous recording but keep robot mode active.");
+                robotButton.PerformClick();
+                robot.Recorder.Drain();
+                Check(scanner.State == ScanState.Idle && pipeline.AudioTap == null && scanner.ExtraLockout == null
+                    && !robot.Recorder.IsRecording, "Stopping robot scan must detach capture and lockouts.");
+                Check(robot.Config.RecordClips && robot.Config.EarlySkip && robot.Config.SpeechEarlySkip,
+                    "Switching scan modes must preserve robot settings.");
+
+                normalButton.PerformClick();
+                Check(scanner.State == ScanState.Scanning && pipeline.AudioTap == null && scanner.ExtraLockout == null,
+                    "A subsequent normal scan must remain independent of robot mode.");
+                Call(form, "btnScan_Click", form, EventArgs.Empty);
+                Check(scanner.State == ScanState.Idle, "The receiver Scan button must stop the active scan.");
+                Call(form, "btnScan_Click", form, EventArgs.Empty);
+                Check(scanner.State == ScanState.Scanning && pipeline.AudioTap == null && scanner.ExtraLockout == null,
+                    "The receiver Scan button must start normal scanning.");
+                Call(form, "StopScan");
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
         }
     }
 

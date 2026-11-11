@@ -12,7 +12,9 @@ namespace RandySDR
         private Label _lblRobotStatus = null!;
         private ListView _lstRobotClips = null!, _lstRobotLockouts = null!;
         private readonly System.Windows.Forms.Timer _robotTimer = new() { Interval = 500 };
-        private bool _loadingRobotUi, _robotDirty = true;
+        private bool _loadingRobotUi;
+        private volatile bool _robotDirty = true;
+        private DateTime _lastRobotLockoutRefresh = DateTime.MinValue;
 
         private void BuildRobotCard()
         {
@@ -34,12 +36,13 @@ namespace RandySDR
             _chkRobotTranscribe = new CheckBox { Text = "Transcribe (Whisper)", AutoSize = true };
             _chkRobotClassify = new CheckBox { Text = "Classify (Ollama)", AutoSize = true };
             _chkRobotEarlySkip = new CheckBox { Text = "Early-skip dead carriers", AutoSize = true };
-            _cmbRobotLockout = NewCombo(new[] { "Auto-lockout off", "Suggest lockouts", "Auto lockout" });
+            _cmbRobotLockout = NewCombo(new[] { "Off", "Suggest only", "Auto lockout" });
+            _cmbRobotLockout.Width = 140; // Ensure full text is visible
             _lblRobotStatus = new Label { Text = "Robot idle", AutoSize = true, ForeColor = Color.Gray, Margin = new Padding(0, 4, 0, 4) };
             var flags = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Fill };
             flags.Controls.AddRange(new Control[] { _chkRobotRecord, _chkRobotTranscribe, _chkRobotClassify, _chkRobotEarlySkip, _cmbRobotLockout });
 
-            _lstRobotClips = NewRobotList(true, "Time", 70, "MHz", 80, "Class", 70, "Sec", 40, "Category", 90, "Transcript", 400);
+            _lstRobotClips = NewRobotList(true, "Delete", 35, "Time", 70, "MHz", 80, "Class", 70, "Sec", 40, "Category", 90, "Transcript", 400);
             _lstRobotLockouts = NewRobotList(false, "MHz", 80, "Status", 80, "Reason", 400);
             var btnPlay = NewButton("Play");
             var btnStar = NewButton("Star");
@@ -50,6 +53,9 @@ namespace RandySDR
             var btnOpen = NewButton("Open folder");
             var btnAccept = NewButton("Accept");
             var btnRestore = NewButton("Restore");
+            var btnMarkDelete = NewButton("Mark delete");
+            var btnUnmarkDelete = NewButton("Unmark delete");
+            var btnClearAllMarks = NewButton("Clear all marks");
 
             var layout = new TableLayoutPanel { ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -57,7 +63,13 @@ namespace RandySDR
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
-            var clipsSection = ListSection("Recent clips", _lstRobotClips, btnPlay, btnStar, btnWrong, btnRedo, btnDelete, btnDeleteJunk, btnOpen);
+            var clipsSection = ListSection(null, _lstRobotClips, btnPlay, btnStar, btnWrong, btnRedo, btnDelete, btnDeleteJunk, btnOpen);
+            clipsSection.Controls.RemoveAt(0);
+            var clipHeader = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
+            clipHeader.Controls.Add(new Label { Text = "Recent clips", AutoSize = true, Margin = new Padding(0, 7, 8, 0) });
+            var btnDetails = new Button { Text = "View details", AutoSize = true, Enabled = false };
+            clipHeader.Controls.Add(btnDetails);
+            clipsSection.Controls.Add(clipHeader, 0, 0);
             var lockSection = ListSection("Lockout suggestions / auto-lockouts", _lstRobotLockouts, btnAccept, btnRestore);
             foreach (var c in new Control[] { flags, _lblRobotStatus, clipsSection, lockSection })
             {
@@ -92,7 +104,7 @@ namespace RandySDR
                 c.Transcribe = _chkRobotTranscribe.Checked;
                 c.Classify = _chkRobotClassify.Checked;
                 c.EarlySkip = _chkRobotEarlySkip.Checked;
-                c.LockoutMode = (AutoLockoutMode)Math.Max(0, _cmbRobotLockout.SelectedIndex);
+                c.LockoutMode = (AutoLockoutMode)_cmbRobotLockout.SelectedIndex;
                 c.Save();
                 _robot.ApplyConfig();
                 _robot.RefreshLockoutCache();
@@ -106,12 +118,71 @@ namespace RandySDR
             long? SelClip() => _lstRobotClips.SelectedItems.Count > 0 ? (long)_lstRobotClips.SelectedItems[0].Tag! : null;
             List<long> SelClips() => _lstRobotClips.SelectedItems.Cast<ListViewItem>().Select(i => (long)i.Tag!).ToList();
             long? SelLock() => _lstRobotLockouts.SelectedItems.Count > 0 ? (long)_lstRobotLockouts.SelectedItems[0].Tag! : null;
+            void ShowClipDetails(long id)
+            {
+                var clip = _robot?.Store.GetClip(id);
+                if (clip == null || clip.Deleted)
+                {
+                    MessageBox.Show(this, "This clip is no longer available.", "Clip details", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                using var details = new ClipDetailsForm(clip);
+                details.ShowDialog(this);
+            }
+            _lstRobotClips.SelectedIndexChanged += (_, _) => btnDetails.Enabled = _lstRobotClips.SelectedItems.Count == 1;
+            btnDetails.Click += (_, _) => { if (_lstRobotClips.SelectedItems.Count == 1 && SelClip() is long id) ShowClipDetails(id); };
+            _lstRobotClips.MouseDoubleClick += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Left && _lstRobotClips.GetItemAt(e.X, e.Y)?.Tag is long id) ShowClipDetails(id);
+            };
+            _lstRobotClips.KeyDown += (_, e) =>
+            {
+                if (e.KeyCode == Keys.Enter && _lstRobotClips.SelectedItems.Count == 1 && SelClip() is long id)
+                {
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    ShowClipDetails(id);
+                }
+            };
             void DeleteIds(List<long> ids, string what)
             {
                 if (ids.Count == 0 || _robot == null) return;
-                if (ids.Count > 1 && MessageBox.Show(this, $"Delete {ids.Count} {what} and their audio files?", "Delete clips",
-                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-                foreach (var id in ids) _robot.DeleteClip(id);
+                if (ids.Count > 1 && MessageBox.Show(this, $"Delete {ids.Count} {what}?") != DialogResult.Yes) return;
+                foreach (var id in ids)
+                {
+                    try { _robot.DeleteClip(id); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        MessageBox.Show(this, $"Could not delete clip {id}: {ex.Message}", "Delete clips", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+                RefreshRobotLists();
+            }
+            
+            void DeleteMarkedClips()
+            {
+                var ids = _lstRobotClips.Items.Cast<ListViewItem>()
+                    .Where(i => i.Checked)
+                    .Select(i => (long)i.Tag!).ToList();
+                
+                if (ids.Count == 0 || _robot == null) return;
+                if (MessageBox.Show(this, $"Delete {ids.Count} marked clips?") != DialogResult.Yes) return;
+                
+                foreach (var id in ids)
+                {
+                    try { _robot.DeleteClip(id); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        MessageBox.Show(this, $"Could not delete clip {id}: {ex.Message}", "Delete clips", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+                
+                // Unmark all checked items after deletion
+                foreach (ListViewItem item in _lstRobotClips.Items)
+                {
+                    if (item.Checked) item.Checked = false;
+                }
+                
                 RefreshRobotLists();
             }
             btnPlay.Click += (_, _) =>
@@ -127,6 +198,59 @@ namespace RandySDR
                 DeleteIds(_lstRobotClips.Items.Cast<ListViewItem>()
                     .Where(i => !i.SubItems[2].Text.StartsWith('*') && i.SubItems[2].Text.ToUpperInvariant() is "CARRIER" or "TONE" or "NOISE")
                     .Select(i => (long)i.Tag!).ToList(), "carrier/tone/noise clips");
+            var btnDeleteMarked = NewButton("Delete marked");
+            clipHeader.Controls.Add(btnMarkDelete);
+            clipHeader.Controls.Add(btnUnmarkDelete);
+            clipHeader.Controls.Add(btnClearAllMarks);
+            clipHeader.Controls.Add(btnDeleteMarked);
+            
+            btnDeleteMarked.Click += (_, _) => DeleteMarkedClips();
+            
+            btnMarkDelete.Click += (_, _) =>
+            {
+                foreach (var id in SelClips())
+                {
+                    var item = _lstRobotClips.Items.Cast<ListViewItem>().FirstOrDefault(i => (long)i.Tag! == id);
+                    if (item != null) item.Checked = true;
+                }
+            };
+            
+            btnUnmarkDelete.Click += (_, _) =>
+            {
+                foreach (var id in SelClips())
+                {
+                    var item = _lstRobotClips.Items.Cast<ListViewItem>().FirstOrDefault(i => (long)i.Tag! == id);
+                    if (item != null) item.Checked = false;
+                }
+            };
+            
+            btnClearAllMarks.Click += (_, _) =>
+            {
+                foreach (ListViewItem item in _lstRobotClips.Items) item.Checked = false;
+            };
+            // Add sorting on column click (skip delete checkbox column)
+            _lstRobotClips.ColumnClick += (_, e) =>
+            {
+                var col = e.Column;
+                if (col == 0) return; // Skip delete checkbox column
+                
+                // Toggle sort direction: if same column, reverse; otherwise start ascending
+                var currentSort = _lstRobotClips.Tag as (int Column, SortOrder Order)?;
+                SortOrder newOrder;
+                if (currentSort.HasValue && currentSort.Value.Column == col)
+                {
+                    newOrder = currentSort.Value.Order == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
+                }
+                else
+                {
+                    newOrder = SortOrder.Ascending;
+                }
+                
+                _lstRobotClips.ListViewItemSorter = new ListViewItemComparer(col, newOrder);
+                _lstRobotClips.Sort();
+                _lstRobotClips.Tag = (col, newOrder); // Store current sort column and order
+            };
+
             _lstRobotClips.KeyDown += (_, e) =>
             {
                 if (e.KeyCode == Keys.Delete) { DeleteIds(SelClips(), "selected clips"); e.Handled = true; }
@@ -134,6 +258,68 @@ namespace RandySDR
                 {
                     foreach (ListViewItem i in _lstRobotClips.Items) i.Selected = true;
                     e.Handled = true;
+                }
+            };
+
+            // Track last clicked item for Shift+Click range selection
+            int? _lastClickedIndex = null;
+
+            // Update delete checkbox text based on checked state
+            _lstRobotClips.ItemChecked += (_, e) =>
+            {
+                if (e.Item.Index >= 0 && e.Item.Index < _lstRobotClips.Items.Count)
+                {
+                    var item = _lstRobotClips.Items[e.Item.Index];
+                    // Update the checkbox column text based on checked state
+                    item.SubItems[0].Text = item.Checked ? "✓" : "X";
+                }
+            };
+
+            // Handle Shift+Click for range selection
+            _lstRobotClips.MouseDown += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Left && _lstRobotClips.GetItemAt(e.X, e.Y) is ListViewItem clickedItem)
+                {
+                    var clickedIndex = clickedItem.Index;
+                    
+                    // If Shift is pressed and there's a previously clicked item, select range
+                    if (Control.ModifierKeys.HasFlag(Keys.Shift) && _lastClickedIndex.HasValue)
+                    {
+                        int start = Math.Min(_lastClickedIndex.Value, clickedIndex);
+                        int end = Math.Max(_lastClickedIndex.Value, clickedIndex);
+                        
+                        // Preserve checked state of items in range
+                        var checkedStates = new Dictionary<int, bool>();
+                        for (int i = 0; i < _lstRobotClips.Items.Count; i++)
+                        {
+                            if (_lstRobotClips.Items[i].Selected)
+                            {
+                                checkedStates[i] = _lstRobotClips.Items[i].Checked;
+                            }
+                        }
+                        
+                        // Select all items in range
+                        for (int i = start; i <= end; i++)
+                        {
+                            _lstRobotClips.Items[i].Selected = true;
+                            // Restore checked state if it was previously selected
+                            if (checkedStates.ContainsKey(i))
+                            {
+                                _lstRobotClips.Items[i].Checked = checkedStates[i];
+                            }
+                        }
+                    }
+                    
+                    _lastClickedIndex = clickedIndex;
+                }
+            };
+
+            // Reset last clicked index when clicking elsewhere or on header
+            _lstRobotClips.MouseClick += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Left && _lstRobotClips.GetItemAt(e.X, e.Y) == null)
+                {
+                    _lastClickedIndex = null;
                 }
             };
             btnOpen.Click += (_, _) =>
@@ -161,7 +347,7 @@ namespace RandySDR
 
         private static ListView NewRobotList(bool multi, params object[] cols)
         {
-            var lv = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true, MultiSelect = multi, HideSelection = false, Margin = new Padding(0, 4, 0, 4) };
+            var lv = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true, MultiSelect = multi, HideSelection = false, Margin = new Padding(0, 4, 0, 4), CheckBoxes = true };
             for (int i = 0; i < cols.Length; i += 2) lv.Columns.Add((string)cols[i], (int)cols[i + 1]);
             return lv;
         }
@@ -169,14 +355,20 @@ namespace RandySDR
         private void RobotTick()
         {
             if (_robot == null) return;
-            if (_robot.EarlySkipDue && _scanner is { State: ScanState.Locked })
+            if (DateTime.UtcNow - _lastRobotLockoutRefresh >= TimeSpan.FromMinutes(1))
+            {
+                _lastRobotLockoutRefresh = DateTime.UtcNow;
+                _robot.RefreshLockoutCache();
+                _robotDirty = true;
+            }
+            if (_robotScanActive && _robot.EarlySkipDue && _scanner is { State: ScanState.Locked })
             {
                 _robot.EndRecording("early-skip");
                 _scanner.Resume();
             }
 
             var r = _robot.Recorder;
-            string state = r.IsRecording ? $"REC {r.LockOpenSeconds:F0}s" : "idle";
+            string state = r.IsWriting ? $"REC {r.LockOpenSeconds:F0}s" : r.IsRecording ? "waiting for audio" : "idle";
             string disk = "";
             try
             {
@@ -184,10 +376,15 @@ namespace RandySDR
                 if (root != null) disk = $" | disk {new DriveInfo(root).AvailableFreeSpace / 1e9:F0} GB free";
             }
             catch { }
-            string ai = string.IsNullOrEmpty(_robot.AiStatus) ? "" : " | " + _robot.AiStatus;
+            string whisperStatus = _robot.Whisper.Status;
+            string aiStatus = whisperStatus.StartsWith("Downloading ", StringComparison.Ordinal) ||
+                              whisperStatus is "Loading Whisper model..." or "Transcribing..."
+                ? whisperStatus : _robot.AiStatus;
+            string ai = string.IsNullOrEmpty(aiStatus) ? "" : " | " + aiStatus;
             string err = r.LastError is { Length: > 0 } e ? " | " + e : "";
-            _lblRobotStatus.Text = $"{state} | dropped {r.DroppedBlocks} | AI queue {_robot.AiBacklog}{disk}{ai}{err}";
-            _lblRobotStatus.ForeColor = r.IsRecording ? Color.Firebrick : Color.Gray;
+            string lost = _robot.LostAnalysisClips > 0 ? $" | unindexed clips {_robot.LostAnalysisClips}" : "";
+            _lblRobotStatus.Text = $"{state} | dropped {r.DroppedBlocks} | AI queue {_robot.AiBacklog}{lost}{disk}{ai}{err}";
+            _lblRobotStatus.ForeColor = r.IsWriting ? Color.Firebrick : Color.Gray;
 
             if (!_robotDirty) return;
             _robotDirty = false;
@@ -206,10 +403,10 @@ namespace RandySDR
                 {
                     var item = new ListViewItem(new[]
                     {
-                        c.StartUtc.ToLocalTime().ToString("HH:mm:ss"), (c.Hz / 1e6).ToString("0.0000"),
+                        "X", c.StartUtc.ToLocalTime().ToString("HH:mm:ss"), (c.Hz / 1e6).ToString("0.0000"),
                         (c.Starred ? "* " : "") + c.Class, c.DurationSec.ToString("0"), c.Category ?? "",
                         string.IsNullOrEmpty(c.Transcript) ? c.Status ?? "" : c.Transcript
-                    }) { Tag = c.Id, Selected = selClips.Contains(c.Id) };
+                    }) { Tag = c.Id, Selected = selClips.Contains(c.Id), Checked = false };
                     _lstRobotClips.Items.Add(item);
                 }
                 _lstRobotClips.EndUpdate();
@@ -223,6 +420,39 @@ namespace RandySDR
                 _lstRobotLockouts.EndUpdate();
             }
             catch (Exception ex) { Debug.WriteLine("Robot list refresh failed: " + ex.Message); }
+        }
+
+        // Custom comparer for ListView sorting
+        private class ListViewItemComparer : System.Collections.IComparer
+        {
+            private readonly int _column;
+            private readonly SortOrder _order;
+
+            public ListViewItemComparer(int column, SortOrder order)
+            {
+                _column = column;
+                _order = order;
+            }
+
+            public int Compare(object? x, object? y)
+            {
+                if (x is ListViewItem lx && y is ListViewItem ly)
+                {
+                    string text1 = _column > 0 ? lx.SubItems[_column].Text : lx.Text;
+                    string text2 = _column > 0 ? ly.SubItems[_column].Text : ly.Text;
+
+                    // Try parsing as double for numeric sorting (frequency, duration)
+                    if (double.TryParse(text1, out double val1) && double.TryParse(text2, out double val2))
+                    {
+                        return _order == SortOrder.Ascending ? val1.CompareTo(val2) : val2.CompareTo(val1);
+                    }
+
+                    // Otherwise sort as strings
+                    var cmp = string.Compare(text1, text2, StringComparison.Ordinal);
+                    return _order == SortOrder.Ascending ? cmp : -cmp;
+                }
+                return 0;
+            }
         }
     }
 }

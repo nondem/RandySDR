@@ -117,7 +117,11 @@ namespace RandySDR
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private void btnScan_Click(object sender, EventArgs e) => ToggleScan();
+        private void btnScan_Click(object sender, EventArgs e)
+        {
+            if (_scanner is { State: not ScanState.Idle }) StopScan();
+            else ToggleScan(false);
+        }
 
         private void rdoSamplingMode_CheckedChanged(object sender, EventArgs e)
         {

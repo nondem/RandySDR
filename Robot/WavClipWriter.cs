@@ -16,7 +16,7 @@ namespace RandySDR
             Path = path;
             _sampleRate = sampleRate;
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
-            _fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+            _fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
             WriteHeader();
         }
 

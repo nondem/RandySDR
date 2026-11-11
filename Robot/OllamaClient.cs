@@ -1,4 +1,5 @@
 // OllamaClient - classifies a transcript with a local Ollama model using a JSON-schema constrained reply.
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -15,10 +16,15 @@ namespace RandySDR
             "public_works", "utility", "broadcast", "other", "unknown"
         };
 
-        private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+        private readonly HttpClient _http;
         private readonly Func<RobotConfig> _config;
 
-        public OllamaClient(Func<RobotConfig> config) => _config = config;
+        public OllamaClient(Func<RobotConfig> config, HttpMessageHandler? handler = null)
+        {
+            _config = config;
+            _http = handler == null ? new HttpClient() : new HttpClient(handler);
+            _http.Timeout = Timeout.InfiniteTimeSpan;
+        }
 
         public async Task<LlmClassification?> ClassifyAsync(string transcript, double mhz, string mode, CancellationToken ct)
         {
@@ -71,13 +77,29 @@ namespace RandySDR
                     timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(5, cfg.OllamaTimeoutSeconds)));
                     using var resp = await _http.PostAsync(cfg.OllamaUrl.TrimEnd('/') + "/api/chat",
                         new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), timeout.Token);
-                    resp.EnsureSuccessStatusCode();
+                    
+                    // Check if server is reachable
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        var errorBody = await resp.Content.ReadAsStringAsync();
+                        throw new HttpRequestException($"Ollama HTTP {resp.StatusCode}: {errorBody}");
+                    }
+                    
                     var json = await resp.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: timeout.Token);
                     string? content = json?["message"]?["content"]?.GetValue<string>();
                     var parsed = Parse(content);
                     if (parsed != null) return parsed;
                 }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"Ollama request timed out after {cfg.OllamaTimeoutSeconds} seconds. Is 'ollama serve' running?");
+                }
                 catch (OperationCanceledException) { throw; }
+                catch (HttpRequestException ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Ollama HTTP error: {ex.Message}");
+                    if (attempt == 1) throw;
+                }
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"Ollama call failed: {ex.Message}");
@@ -106,7 +128,18 @@ namespace RandySDR
             catch (InvalidOperationException) { return null; }
         }
 
-        public async Task<bool> IsAvailableAsync(CancellationToken ct) => (await ListModelsAsync(_config().OllamaUrl, ct)) != null;
+        public async Task<bool> IsAvailableAsync(CancellationToken ct)
+        {
+            try
+            {
+                var models = await ListModelsAsync(_config().OllamaUrl, ct);
+                return models != null && models.Count > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         /// <summary>Installed model names from /api/tags, or null when the server is unreachable.</summary>
         public async Task<List<string>?> ListModelsAsync(string url, CancellationToken ct)
@@ -116,11 +149,51 @@ namespace RandySDR
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(TimeSpan.FromSeconds(5));
                 using var r = await _http.GetAsync(url.TrimEnd('/') + "/api/tags", timeout.Token);
-                if (!r.IsSuccessStatusCode) return null;
+                
+                if (!r.IsSuccessStatusCode)
+                {
+                    Debug.WriteLine($"Ollama /api/tags returned HTTP {r.StatusCode}");
+                    return null;
+                }
+                
                 var json = await r.Content.ReadFromJsonAsync<JsonObject>(cancellationToken: timeout.Token);
                 return json?["models"]?.AsArray().Select(m => m?["name"]?.GetValue<string>() ?? "").Where(n => n.Length > 0).OrderBy(n => n).ToList() ?? new List<string>();
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Ollama model list failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>Checks if Ollama server is running and returns a user-friendly status message.</summary>
+        public static async Task<string> CheckServerStatusAsync(string url, CancellationToken ct)
+        {
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(3));
+                using var r = await new HttpClient().GetAsync(url.TrimEnd('/') + "/api/tags", timeout.Token);
+                
+                if (r.IsSuccessStatusCode)
+                {
+                    return "Ollama server is running";
+                }
+                
+                return $"Ollama server responded with HTTP {r.StatusCode}";
+            }
+            catch (HttpRequestException ex)
+            {
+                return $"Cannot connect to Ollama at {url}: {ex.Message}. Is 'ollama serve' running?";
+            }
+            catch (TaskCanceledException)
+            {
+                return $"Connection to Ollama at {url} timed out. Check firewall or proxy settings.";
+            }
+            catch (Exception ex)
+            {
+                return $"Ollama status check failed: {ex.Message}";
+            }
         }
 
         public void Dispose() => _http.Dispose();

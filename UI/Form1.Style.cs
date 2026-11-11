@@ -17,6 +17,7 @@ namespace RandySDR
             btnStart.BackColor = Color.FromArgb(30, 120, 70);
             btnStop.BackColor = Color.FromArgb(150, 50, 50);
             _btnScanToggle.BackColor = Color.FromArgb(0, 110, 170);
+            _btnRobotScan.BackColor = Color.FromArgb(0, 110, 170);
 
             lblStatus.BackColor = Color.FromArgb(26, 30, 40);
             lblStatus.ForeColor = Color.FromArgb(150, 220, 255);

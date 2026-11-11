@@ -1,7 +1,7 @@
 // LockoutPolicy - pure rules deciding when a channel should be auto-locked-out. Kept free of I/O so it is unit-testable.
 namespace RandySDR
 {
-    public sealed record ClipHistoryEntry(DateTime StartUtc, ClipClass Class, double DurationSec);
+    public sealed record ClipHistoryEntry(DateTime StartUtc, ClipClass Class, double DurationSec, long LockId = 0);
 
     public static class LockoutPolicy
     {
@@ -29,7 +29,9 @@ namespace RandySDR
             var recent = history.Where(h => nowUtc - h.StartUtc <= Window).OrderByDescending(h => h.StartUtc).ToList();
             if (recent.Count == 0 || recent.Any(h => h.Class is ClipClass.Voice or ClipClass.Uncertain)) return false;
 
-            if (recent.Count >= ConsecutiveJunkClips && recent.Take(ConsecutiveJunkClips).All(h => IsJunk(h.Class)))
+            var seenLocks = new HashSet<long>();
+            var distinctLocks = recent.Where(h => h.LockId == 0 || seenLocks.Add(h.LockId)).ToList();
+            if (distinctLocks.Count >= ConsecutiveJunkClips && distinctLocks.Take(ConsecutiveJunkClips).All(h => IsJunk(h.Class)))
             {
                 reason = $"{ConsecutiveJunkClips}+ consecutive carrier/noise/tone locks with no speech in 24 h";
                 return true;

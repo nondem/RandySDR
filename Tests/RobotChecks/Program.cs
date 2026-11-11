@@ -65,6 +65,11 @@ internal static class Program
         StoreChecks();
         ParseChecks();
         RecorderChecks();
+        SpeechSkipChecks();
+        SpeechSkipRecorderChecks();
+        SettingsChecks();
+        OllamaTimeoutChecks();
+        ClipDetailsChecks();
         Console.WriteLine(_failures == 0 ? "ALL PASSED" : $"{_failures} FAILED");
         return _failures == 0 ? 0 : 1;
     }
@@ -77,6 +82,8 @@ internal static class Program
         Check(noise.Class is ClipClass.Noise or ClipClass.Carrier, $"white noise not Voice/Tone ({noise.Class})");
         var speech = ClipAnalyzer.Analyze(SpeechLike(4), Sr);
         Check(speech.Class == ClipClass.Voice, $"speech-like -> Voice ({speech.Class}, speech {speech.SpeechSec:F1}s)");
+        var strict = ClipAnalyzer.Analyze(SpeechLike(4), Sr, new ClipAnalyzerOptions(10, 0.20, 0.05));
+        Check(strict.Class == ClipClass.Uncertain, "configured speech duration changes triage");
     }
 
     private static void PolicyChecks()
@@ -89,6 +96,8 @@ internal static class Program
         Check(!LockoutPolicy.ShouldPropose(new[] { E(1, ClipClass.Carrier), E(2, ClipClass.Noise), E(3, ClipClass.Tone) }, true, now, out _), "voice in 30 days -> no");
         Check(!LockoutPolicy.ShouldPropose(new[] { E(1, ClipClass.Carrier), E(2, ClipClass.Uncertain), E(3, ClipClass.Noise) }, false, now, out _), "uncertain -> no");
         Check(LockoutPolicy.ShouldPropose(new[] { E(1, ClipClass.Carrier, 400) }, false, now, out _), "300s junk -> propose");
+        var sameLock = new[] { new ClipHistoryEntry(now, ClipClass.Tone, 10, 7), new ClipHistoryEntry(now.AddSeconds(-1), ClipClass.Tone, 10, 7), new ClipHistoryEntry(now.AddSeconds(-2), ClipClass.Tone, 10, 7) };
+        Check(!LockoutPolicy.ShouldPropose(sameLock, false, now, out _), "split clips from one lock do not count as three locks");
         Check(!LockoutPolicy.ShouldPropose(new[] { E(30, ClipClass.Carrier), E(31, ClipClass.Carrier), E(32, ClipClass.Carrier) }, false, now, out _), "old history ignored");
         Check(LockoutPolicy.ChannelKey(146_520_100, 25_000) == LockoutPolicy.ChannelKey(146_525_000, 25_000), "key rounds to step");
     }
@@ -164,10 +173,101 @@ internal static class Program
             rec.End("released");
             rec.Drain();
             Check(results.Count(r => r.Info.LockId == 3 && !r.Deleted) == 2, "squelch gap splits clip");
+            var split = results.Where(r => r.Info.LockId == 3 && !r.Deleted).ToList();
+            Check(split.Count == 2 && split.All(r => r.DurationSec < 2.6), "trailing squelch gap is omitted");
+            Check(split.Count == 2 && split[1].DurationSec > 2.4, "later segment does not repeat retune trim");
+            Check(split.Count == 2 && split[0].Path != split[1].Path && split.All(r => File.Exists(r.Path)), "segments have distinct files");
         }
         finally
         {
             try { Directory.Delete(dir, true); } catch { }
         }
+    }
+
+    private static void SpeechSkipChecks()
+    {
+        var silence = new SpeechSkipDetector(Sr);
+        silence.Add(new float[Sr * 4]);
+        Check(!silence.ShouldSkip(6), "speech skip waits for minimum screened audio");
+        silence.Add(new float[Sr * 2]);
+        Check(silence.ShouldSkip(6), "speech skip detects screened silence");
+        var speech = new SpeechSkipDetector(Sr);
+        speech.Add(SpeechLike(2));
+        speech.Add(new float[Sr * 8]);
+        Check(!speech.ShouldSkip(6), "speech-like audio protects whole lock");
+        var tone = new SpeechSkipDetector(Sr);
+        tone.Add(Tone(1000, 6));
+        Check(tone.ShouldSkip(6), "speech skip can screen a steady tone");
+    }
+
+    private static void SpeechSkipRecorderChecks()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "RandySDR-skip-" + Guid.NewGuid());
+        try
+        {
+            using var rec = new ClipRecorder(() => dir, () => 120, () => 0, () => true, () => 6);
+            rec.Begin(new ClipInfo(1, 146_520_000, "NFM", 10));
+            Feed(rec, new float[(int)(6.4 * Sr)], true);
+            rec.Drain();
+            Check(rec.SpeechSkipDue, "recorder exposes screened no-speech decision");
+            rec.InvalidateSpeechSkip();
+            Check(!rec.SpeechSkipDue, "settings changes invalidate speech skip for the active lock");
+            rec.End("test");
+            rec.Begin(new ClipInfo(2, 146_520_000, "NFM", 10));
+            Feed(rec, SpeechLike(2.4), true);
+            Feed(rec, new float[Sr * 6], true);
+            rec.Drain();
+            Check(!rec.SpeechSkipDue, "recorder protects speech on a new lock");
+            rec.End("test");
+            rec.Drain();
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    private static void SettingsChecks()
+    {
+        var defaults = new RobotConfig();
+        Check(!defaults.SpeechEarlySkip && defaults.SpeechEarlySkipSeconds == 10, "speech skip is opt-in");
+        var original = new RobotConfig { SpeechEarlySkip = true, SpeechEarlySkipSeconds = 16, TriageMinSpeechRatio = 0.4 };
+        var json = System.Text.Json.JsonSerializer.Serialize(original);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<RobotConfig>(json);
+        Check(restored is { SpeechEarlySkip: true, SpeechEarlySkipSeconds: 16, TriageMinSpeechRatio: 0.4 }, "new settings round trip");
+    }
+
+    private static void OllamaTimeoutChecks()
+    {
+        using var client = new OllamaClient(() => new RobotConfig(), new TimeoutThenSuccessHandler());
+        bool timedOut = false;
+        try { client.ClassifyAsync("hello", 146, "NFM", CancellationToken.None).GetAwaiter().GetResult(); }
+        catch (TimeoutException) { timedOut = true; }
+        Check(timedOut, "request timeout distinguished from shutdown cancellation");
+        var result = client.ClassifyAsync("hello", 146, "NFM", CancellationToken.None).GetAwaiter().GetResult();
+        Check(result?.Summary == "test", "Ollama accepts later request after timeout");
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        bool cancelledCorrectly = false;
+        try { client.ClassifyAsync("hello", 146, "NFM", cancelled.Token).GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { cancelledCorrectly = true; }
+        Check(cancelledCorrectly, "shutdown cancellation preserved");
+    }
+
+    private static void ClipDetailsChecks()
+    {
+        string transcript = new string('a', 40000) + " end";
+        string summary = "A complete summary";
+        var clip = new ClipRow(1, "test.wav", DateTime.UtcNow, 146_520_000, "NFM", 1, 1, 12,
+            "VOICE", 4, transcript, "amateur", 0, summary, 0.8, false, false, false, "classified");
+        using var form = new ClipDetailsForm(clip);
+        form.CreateControl();
+        var transcriptBox = (TextBox)form.Controls.Find("clipTranscript", true).Single();
+        var summaryBox = (TextBox)form.Controls.Find("clipSummary", true).Single();
+        _ = transcriptBox.Handle;
+        _ = summaryBox.Handle;
+        Check(transcriptBox.Text == transcript && transcriptBox.ReadOnly && transcriptBox.Multiline && transcriptBox.ScrollBars == ScrollBars.Vertical,
+            "clip details preserve the entire long transcript in a scrollable read-only field");
+        Check(summaryBox.Text == summary && summaryBox.ReadOnly, "clip details show selectable summary");
+        using var emptyForm = new ClipDetailsForm(clip with { Transcript = "", Status = "ai-failed" });
+        var emptyTranscript = (TextBox)emptyForm.Controls.Find("clipTranscript", true).Single();
+        Check(emptyTranscript.Text == "", "missing transcript is not replaced with status text");
     }
 }

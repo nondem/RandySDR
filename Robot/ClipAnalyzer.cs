@@ -17,7 +17,7 @@ namespace RandySDR
         public const double CarrierMaxRatio = 0.05;
         private const int Frame = 1024; // ~21 ms at 48 kHz
 
-        public static ClipMetrics AnalyzeFile(string wavPath)
+        public static ClipMetrics AnalyzeFile(string wavPath, ClipAnalyzerOptions? options = null)
         {
             using var reader = new AudioFileReader(wavPath);
             var samples = new List<float>((int)reader.Length / 4);
@@ -25,11 +25,15 @@ namespace RandySDR
             int n;
             while ((n = reader.Read(buf, 0, buf.Length)) > 0)
                 for (int i = 0; i < n; i++) samples.Add(buf[i]);
-            return Analyze(samples.ToArray(), reader.WaveFormat.SampleRate);
+            return Analyze(samples.ToArray(), reader.WaveFormat.SampleRate, options);
         }
 
-        public static ClipMetrics Analyze(float[] x, int sampleRate)
+        public static ClipMetrics Analyze(float[] x, int sampleRate, ClipAnalyzerOptions? options = null)
         {
+            options ??= ClipAnalyzerOptions.Default;
+            if (options.MinSpeechSeconds < 0 || options.MinSpeechRatio is < 0 or > 1 ||
+                options.MaxCarrierRatio is < 0 or > 1 || options.MaxCarrierRatio > options.MinSpeechRatio)
+                throw new ArgumentOutOfRangeException(nameof(options), "Invalid triage thresholds.");
             double dur = x.Length / (double)sampleRate;
             int frames = x.Length / Frame;
             if (frames < 3)
@@ -110,8 +114,8 @@ namespace RandySDR
             ClipClass cls;
             if (rmsDb < -60) cls = ClipClass.Carrier;
             else if (toneRatio >= 0.6) cls = ClipClass.Tone;
-            else if (speechSec >= MinVoiceSpeechSec && speechRatio >= MinVoiceRatio) cls = ClipClass.Voice;
-            else if (speechRatio < CarrierMaxRatio) cls = meanFlat > 0.3 && rmsDb > -45 ? ClipClass.Noise : ClipClass.Carrier;
+            else if (speechSec >= options.MinSpeechSeconds && speechRatio >= options.MinSpeechRatio) cls = ClipClass.Voice;
+            else if (speechRatio < options.MaxCarrierRatio) cls = meanFlat > 0.3 && rmsDb > -45 ? ClipClass.Noise : ClipClass.Carrier;
             else cls = ClipClass.Uncertain;
 
             return new ClipMetrics(dur, rmsDb, speechSec, speechRatio, toneRatio, meanFlat, cls);

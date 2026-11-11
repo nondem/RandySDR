@@ -35,8 +35,32 @@ UI timer (50 ms) --> ReceiverPipeline.LastIqData --> SpectrumAnalyzer (FFT) --> 
 | | `Form1.SquelchLink.cs` | Optional link between audio squelch and scanner detection threshold; noise floor tracking on quiet hops. |
 | | `Form1.Layout.cs` | Dashboard layout builder, migration of legacy panel settings. |
 | | `Form1.Diagnostics.cs` | Diagnostics report UI. |
+| | `Form1.Robot.cs` | Scan robot UI: status, recent clips, lockout suggestions, Re-run AI button. |
+| | `Form1.Collapse.cs` | Card collapse/expand functionality for dashboard panels. |
+| | `Form1.Style.cs` | Card-based dark theme styling, animated glow on active cards. |
 | | `Form1.Designer.cs` / `.resx` | Layout (keep handler names in sync). |
-| | `SpectrumDisplay.cs`, `FrequencySelector.cs`, `SignalMeter.cs` | Custom controls. |
+| | `CardGroupBox.cs`, `CardResizeGrip.cs` | Custom card controls with foldable headers and glow effects. |
+| | `DashboardLayoutStore.cs`, `DashboardResizeHandle.cs` | Dashboard layout persistence, resize handles for panels. |
+| | `PanelLayoutEngine.cs` | Legacy panel settings migration engine. |
+| | `ClipDetailsForm.cs` | Read-only transcript/summary viewer for selected clips. |
+| | `RobotSettingsForm.cs` | Settings dialog: Ollama, Whisper, recording, retention, early skip, triage thresholds. |
+| | `SpectrumDisplay.cs`, `FrequencySelector.cs`, `SignalMeter.cs`, `ScanGraph.cs` | Custom controls. |
+| `Robot/` | `RobotController.cs` | Main automation pipeline orchestrator: scanner events → recorder → analyzer → AI → lockout policy. |
+| | `ClipRecorder.cs` | Audio capture from DSP tap, WAV file writing, disk space management. |
+| | `WavClipWriter.cs` | Low-level WAV writer with segment management and error handling. |
+| | `SpeechSkipDetector.cs` | Experimental speech-based early skip detection (2-second window analysis). |
+| | `ClipAnalyzer.cs`, `ClipAnalyzerOptions.cs` | VAD-based clip classification: Carrier/Tone/Noise/Voice/Uncertain. Configurable thresholds. |
+| | `LockoutPolicy.cs` | Auto-lockout decision logic: 3-consecutive-junk rule, total junk time limit, 24-hour window. |
+| | `RobotStore.cs`, `RobotConfig.cs` | SQLite database access and configuration persistence. |
+| | `WhisperTranscriber.cs` | Speech-to-text using Whisper.net with CUDA support, hallucination filtering, model download/cache. |
+| | `OllamaClient.cs` | LLM-based classification using local Ollama server, JSON-schema constrained responses. |
+| `Scan/` | `SignalScanner.cs` | Scanner state machine: retune, settle, measure, lock/release signals. |
+| | `ScanSettings.cs` | Scan configuration: range, step, method, threshold, hold mode, lockouts. |
+| | `HopMeasurement.cs` | Per-channel FFT power measurements, noise floor tracking (25th percentile). |
+| | `CbChannels.cs` | CB radio channel definitions and presets. |
+| `Tests/` | `RobotChecks/` | Synthetic audio tests for VAD classification logic. |
+| | `PanelLayoutChecks/`, `PanelResizeChecks/` | WinForms interaction and layout validation tests. |
+| | `ScanPresetChecks/` | Scanner preset validation tests. |
 
 ## Signal scanner (Scan/ + UI/Form1.Scanner.cs)
 - `Scan/ScanSettings.cs`: range, step, method, threshold (dB above noise floor), hold mode, lockouts; JSON in `%AppData%\RandySDR\scan-settings.json`.
@@ -44,6 +68,7 @@ UI timer (50 ms) --> ReceiverPipeline.LastIqData --> SpectrumAnalyzer (FFT) --> 
 - `Scan/SignalScanner.cs`: state machine; `Tick()` is called by a UI-thread timer (25 ms). Retunes via callback, waits for fresh USB buffers (`BuffersProcessed >= tune+2` and SettleMs), reads `ReceiverPipeline.LastIqData`. Locks onto the strongest armed, non-locked-out channel; released channels re-arm only after dropping below threshold-2 dB.
 - New scans wait at least one second from the first scanner tick and then require two fresh buffers before measuring or detecting, so initial tuner and bandwidth changes can settle. Resume and ordinary retunes still use the normal per-hop settling; editing a running scan does not restart the startup delay.
 - `UI/Form1.Scanner.cs`: scanner cards built in code from TableLayoutPanels, presets, log + CSV, lockout list, auto mode by band, audio muted while hopping (`_scanMuted`, applied in `UpdateDemodulatorSettings`). `UI/ScanGraph.cs` plots strength (dB grid, MHz axis, threshold line).
+- Scan Control offers normal and robot scans. Normal scanning bypasses robot audio capture, early skip and robot lockouts while retaining manual scan lockouts and settings; robot scans use the saved robot options. Stop the active scan before choosing the other mode. The receiver's Scan button starts a normal scan or stops whichever scan is active. Previously queued robot analysis can continue independently.
 - Squelch-link feature (`Form1.SquelchLink.cs`): optional link between audio squelch and scanner detection threshold. Linked mode uses a quiet scan hop to estimate in-channel noise floor; audio squelch = tracked floor + detection threshold + offset, with minimum separation from floor. Manual squelch remains active until a quiet hop is measured.
 - `UI/SignalMeter.cs`: custom control for visual signal strength meter with gradient fill and tick marks.
 - `UI/FrequencySelector.cs`: compact grouped GHz/MHz/kHz/Hz display; digit buttons, keyboard arrows and the mouse wheel adjust the corresponding frequency step. Wheel input targets the digit under the pointer without changing focus.
@@ -58,13 +83,18 @@ UI timer (50 ms) --> ReceiverPipeline.LastIqData --> SpectrumAnalyzer (FFT) --> 
 
 ## Scan robot (Robot/ + UI/Form1.Robot.cs)
 
-Implements `sdr_voice_communication_automation_system_plan.md` (rev 2). Every feature is off by default; manual lockout, Resume and Stop always win.
+Implements `sdr_voice_communication_automation_system_plan.md` (rev 2). Recording, AI and early skips are opt-in; lockout suggestions default to enabled. Manual lockout, Resume and Stop take precedence.
 
-- `ReceiverPipeline.AudioTap(float[], bool squelchOpen)` delivers pre-squelch demodulated audio from the DSP thread (called inside try/catch). `RobotController` forwards it to `ClipRecorder`, which writes mono 16-bit 48 kHz WAVs to `%UserProfile%\RandySDR\Clips`, trims trailing silence, and splits on squelch gaps.
-- Completed clips go to an analysis thread (`ClipAnalyzer`: energy/spectral VAD, classes Carrier/Tone/Noise/Voice/Uncertain), are stored in SQLite (`RobotStore`, `%AppData%\RandySDR\robot.db` or the layout directory; `Clips` table, `Lockouts`, decision log), and Voice/Uncertain clips continue to an AI thread: `WhisperTranscriber` (Whisper.net + CUDA, model downloaded to `%AppData%\RandySDR\models`) then `OllamaClient` (default `qwen3.5:35b-a3b-q4_K_M` at `http://localhost:11434`). Ollama/Whisper failures leave clips "unclassified" and never affect scanning.
-- `LockoutPolicy` evaluates junk clips; modes are Off, SuggestOnly (default) and Auto. Lockouts are keyed by frequency rounded to the scan step and consulted through `SignalScanner.ExtraLockout`. Audio retention: 30 days voice, 3 days carrier/noise (`RobotStore.PurgeAudio`).
+- **ClipRecorder**: Queues pre-squelch audio from `ReceiverPipeline.AudioTap(float[], bool squelchOpen)`, writes mono 16-bit 48 kHz WAVs to the configured folder (default `%UserProfile%\RandySDR\Clips`), discards the first 0.3 seconds of each lock, buffers and removes trailing closed-squelch audio, and splits on long squelch gaps or maximum length. Segment filenames are unique.
+- **WavClipWriter**: Low-level WAV writer that handles file I/O, disk space checks, and segment management. Pauses below configured free-space limit or above 90% disk use with retries and status display.
+- **SpeechSkipDetector**: Experimental speech-based early skip (enabled in Settings, defaults off). Analyzes two-second windows on the recorder worker, waits for the configured amount of captured audio (at least six seconds), and does not skip if it detects speech-like/uncertain audio, any dropped block, or a settings change during the lock. The fixed heuristic is not reliable proof that no voice is present: weak or delayed transmissions can still be missed. Separate from squelch-based early skip.
+- **ClipAnalyzer**: Cheap, LLM-free triage using energy + spectral-shape VAD (no model files). Classes: `Carrier`, `Tone`, `Noise`, `Voice`, `Uncertain`. Configurable via `ClipAnalyzerOptions` (min speech seconds/ratio, max carrier ratio). Clips <63ms (<3 frames) are classified as Carrier or Noise based on RMS level.
+- Completed clips go to an analysis thread, stored in SQLite (`RobotStore`, `%AppData%\RandySDR\robot.db` or the layout directory; `Clips` table, `Lockouts`, decision log), and Voice/Uncertain clips continue to an AI thread: `WhisperTranscriber` (Whisper.net + CUDA, model downloaded to `%AppData%\RandySDR\models`) then `OllamaClient` (default `qwen3.5:35b-a3b-q4_K_M` at `http://localhost:11434`). Ollama/Whisper failures leave clips "unclassified" and never affect scanning.
+- **LockoutPolicy**: Evaluates clip history; modes are Off, SuggestOnly (default) and Auto. Multiple segments of one lock count only once toward the three-lock rule. Lockouts are keyed by frequency rounded to the scan step and consulted through `SignalScanner.ExtraLockout`; expiry is refreshed at least once per minute. A voice or starred clip protects the channel, and starring or correcting a junk clip restores its existing robot lockouts. An empty Whisper result does not turn uncertain audio into noise. Audio retention defaults to 30 days voice/uncertain and 3 days carrier/noise (`RobotStore.PurgeAudio`).
 - Config: `%AppData%\RandySDR\robot-config.json` (`RobotConfig`). UI: "Scan Robot" card with status, recent clips and lockout suggestions; a 500 ms `_robotTimer` handles early-skip resume and list refresh.
-- Settings: the toolbar "Settings..." button opens `UI\RobotSettingsForm.cs` (tabs for Ollama model/temperature/context/timeout/keep-alive/extra prompt, Whisper model/language/threshold/threads/vocabulary hint, and clip folder/retention/limits/early-skip). OK saves `RobotConfig`, calls `RobotController.ApplyConfig()`, and `WhisperTranscriber.Reload()` when the model changed.
+- Recent clips: select one and choose View details, double-click a row, or press Enter to open a resizable, read-only view of its full transcript and summary. Text can be selected and copied.
+- Settings: the toolbar "Settings..." button opens `UI\RobotSettingsForm.cs` for Ollama, Whisper, recording, retention, early skip and triage thresholds. A changed Whisper model loads on the next transcription, after any in-flight transcription completes. The card displays download/loading status, recording failures, dropped audio and clips that could not be indexed; use Re-run AI to retry a clip.
+- Disk checks happen when a segment opens; recording pauses below the configured free-space limit or above 90% disk use, with retries and status on the card. They do not monitor free space continuously within an open segment.
 - Threads: recorder (DSP tap, no I/O on it beyond a queue), analysis thread, AI thread. Dispose the controller before the pipeline.
 - Checks: `dotnet run --project Tests\RobotChecks\RobotChecks.csproj` (synthetic audio; the VAD is untested on real RF audio).
 
@@ -180,6 +210,15 @@ Run the WinForms interaction checks with `dotnet run --project Tests\PanelResize
 - Layout was never visually verified by screenshot.
 - Legacy callback path in `RtlSdrWrapper.Start`/`OnDataReceived` and `NativeRtlSdr.Start/ReadLoop` is unused; can be deleted.
 - Audio path clamps then applies `tanh` (redundant).
+- **ClipAnalyzer weaknesses**: 
+  - Memory inefficiency: loads entire audio file into List<float> before converting to array (~30% slower, double allocation)
+  - Assumes 48kHz sample rate: frequency bands calibrated for exactly 48kHz, will misclassify non-48kHz audio
+  - No error handling: File I/O has no try-catch; corrupted WAV files crash analysis thread
+  - Edge case: clips <63ms (<3 frames) classified as Carrier or Noise based on RMS only
+  - Magic numbers: thresholds like `0.55`, `0.45`, `0.35` lack documentation for tuning rationale
+- **WhisperTranscriber**: Model download can fail silently; status messages appear in UI but no retry mechanism. Hallucination filter may over-filter legitimate speech containing phrases like "subscribe" or "thanks for watching".
+- **OllamaClient**: No timeout on initial connection; `HttpClient` created per instance without pooling. JSON parsing failures return null silently.
+- **RobotController**: Analysis queue max 500 clips, AI queue max 200 clips; overflow increments `LostAnalysisClips` counter but no alert. Background threads are `IsBackground = true`, so they terminate abruptly on app shutdown.
 
 ## Known ideas & backlog
 
@@ -187,6 +226,18 @@ Run the WinForms interaction checks with `dotnet run --project Tests\PanelResize
 - Settings persistence beyond scan settings (dashboard layout saved, but app-wide settings not yet persisted).
 - DSP unit-test project for demodulators/squelch logic.
 - Fix mojibake in some Debug strings in `RtlSdrWrapper.cs`.
+- **ClipAnalyzer improvements**: 
+  - Add sample rate validation/resampling support
+  - Add try-catch around file I/O with graceful error reporting
+  - Document threshold rationale and tuning methodology
+  - Combine energy calculation with FFT windowing loop for ~30% speedup
+  - Better handling of clips <63ms (distinguish silence from carrier)
+- **Robot reliability**: 
+  - Add retry mechanism for Whisper model download failures
+  - Implement HttpClient pooling for Ollama requests
+  - Alert when analysis/AI queue overflow occurs
+  - Graceful shutdown with cleanup of in-progress analyses
+- **SpeechSkipDetector**: Validate against real RF audio; compare performance vs squelch-based early skip.
 
 ## Styling & appearance
 

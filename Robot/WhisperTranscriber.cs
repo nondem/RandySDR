@@ -16,6 +16,7 @@ namespace RandySDR
 
         private readonly Func<RobotConfig> _config;
         private WhisperFactory? _factory;
+        private string? _loadedModel;
         private readonly SemaphoreSlim _loadGate = new(1, 1);
 
         public string Status { get; private set; } = "Whisper idle";
@@ -24,13 +25,15 @@ namespace RandySDR
 
         private async Task<WhisperFactory> EnsureFactoryAsync(CancellationToken ct)
         {
-            if (_factory != null) return _factory;
-            await _loadGate.WaitAsync(ct);
             try
             {
-                if (_factory != null) return _factory;
                 var cfg = _config();
                 if (!Enum.TryParse<GgmlType>(cfg.WhisperModel, true, out var type)) type = GgmlType.LargeV3Turbo;
+                string model = type.ToString();
+                if (_factory != null && _loadedModel == model) return _factory;
+                _factory?.Dispose();
+                _factory = null;
+                _loadedModel = null;
                 string dir = Path.Combine(RobotConfig.DataDirectory, "models");
                 Directory.CreateDirectory(dir);
                 string file = Path.Combine(dir, $"ggml-{type}.bin".ToLowerInvariant());
@@ -46,6 +49,7 @@ namespace RandySDR
                 }
                 Status = "Loading Whisper model...";
                 _factory = WhisperFactory.FromPath(file);
+                _loadedModel = model;
                 Status = "Whisper ready";
                 return _factory;
             }
@@ -54,7 +58,6 @@ namespace RandySDR
                 Status = "Whisper unavailable (model download/load failed)";
                 throw;
             }
-            finally { _loadGate.Release(); }
         }
 
         private WhisperProcessor BuildProcessor(WhisperFactory factory)
@@ -68,36 +71,32 @@ namespace RandySDR
             return b.Build();
         }
 
-        /// <summary>Drops the loaded model so the next transcription loads the currently configured one.</summary>
-        public void Reload()
-        {
-            _loadGate.Wait();
-            try { _factory?.Dispose(); _factory = null; Status = "Whisper idle"; }
-            finally { _loadGate.Release(); }
-        }
-
         /// <summary>Transcribes a WAV clip. Returns an empty string when only hallucinations / silence were produced.</summary>
         public async Task<string> TranscribeAsync(string wavPath, CancellationToken ct)
         {
-            var factory = await EnsureFactoryAsync(ct);
-            float[] pcm = Load16kMono(wavPath);
-            if (pcm.Length < 16000 / 2) return "";
-
-            using var processor = BuildProcessor(factory);
-
-            var lines = new List<string>();
-            Status = "Transcribing...";
-            await foreach (var seg in processor.ProcessAsync(pcm, ct))
+            await _loadGate.WaitAsync(ct);
+            try
             {
-                if (seg.NoSpeechProbability > 0.7f) continue;
-                string t = seg.Text.Trim();
-                if (t.Length == 0 || IsHallucination(t)) continue;
-                if (lines.Count > 0 && string.Equals(lines[^1], t, StringComparison.OrdinalIgnoreCase)) continue;
-                lines.Add(t);
+                var factory = await EnsureFactoryAsync(ct);
+                float[] pcm = Load16kMono(wavPath);
+                if (pcm.Length < 16000 / 2) return "";
+                using var processor = BuildProcessor(factory);
+                var lines = new List<string>();
+                Status = "Transcribing...";
+                await foreach (var seg in processor.ProcessAsync(pcm, ct))
+                {
+                    if (seg.NoSpeechProbability > 0.7f) continue;
+                    string t = seg.Text.Trim();
+                    if (t.Length == 0 || IsHallucination(t)) continue;
+                    if (lines.Count > 0 && string.Equals(lines[^1], t, StringComparison.OrdinalIgnoreCase)) continue;
+                    lines.Add(t);
+                }
+                Status = "Whisper ready";
+                string text = string.Join(" ", lines);
+                return IsRepetitiveLoop(text) ? "" : text;
             }
-            Status = "Whisper ready";
-            string text = string.Join(" ", lines);
-            return IsRepetitiveLoop(text) ? "" : text;
+            catch { Status = "Whisper unavailable"; throw; }
+            finally { _loadGate.Release(); }
         }
 
         public static bool IsHallucination(string t)

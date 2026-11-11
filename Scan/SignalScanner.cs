@@ -25,6 +25,8 @@ namespace RandySDR
         private const double AutoMinMarginDb = 3;
         /// <summary>Smoothing factor for threshold learning (0.5 = halfway, 0.8 = slower but smoother). Higher = faster convergence.</summary>
         private const double AutoSmoothing = 0.7;
+        /// <summary>Maximum time to stay locked on a frequency in UntilSignalDrops mode before forcing release. Prevents getting stuck on noisy frequencies.</summary>
+        private const int MaxLockSeconds = 15;
 
         private double[] _hopThresholdDb = Array.Empty<double>();
         private double _autoThresholdDb = double.NaN;
@@ -401,7 +403,7 @@ namespace RandySDR
             
             bool release = holdMode switch
             {
-                HoldMode.UntilSignalDrops => now - _lastPresentMs >= holdSeconds * 1000,
+                HoldMode.UntilSignalDrops => (now - _lastPresentMs >= holdSeconds * 1000) || (now - _lockStartMs >= MaxLockSeconds * 1000),
                 HoldMode.FixedTime => now - _lockStartMs >= holdSeconds * 1000,
                 _ => false
             };

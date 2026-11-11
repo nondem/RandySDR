@@ -15,6 +15,11 @@ namespace RandySDR
         /// <summary>Resume scanning early when a locked channel carries no audio for EarlySkipSeconds (requires an active squelch).</summary>
         public bool EarlySkip { get; set; }
         public double EarlySkipSeconds { get; set; } = 4;
+        public bool SpeechEarlySkip { get; set; }
+        public double SpeechEarlySkipSeconds { get; set; } = 10;
+        public double TriageMinSpeechSeconds { get; set; } = 1.0;
+        public double TriageMinSpeechRatio { get; set; } = 0.20;
+        public double TriageMaxCarrierRatio { get; set; } = 0.05;
 
         public string ClipFolder { get; set; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "RandySDR", "Clips");

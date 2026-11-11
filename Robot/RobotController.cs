@@ -1,6 +1,7 @@
 // RobotController - owns the automation pipeline: scanner events -> recorder -> analyzer -> (Whisper -> Ollama) -> lockout policy.
 // Nothing here may block the scanner, the DSP thread or the UI thread; every slow step runs on a worker thread.
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace RandySDR
 {
@@ -15,9 +16,12 @@ namespace RandySDR
         private readonly Thread _analysisThread, _aiThread;
         private readonly CancellationTokenSource _cts = new();
         private ReceiverPipeline? _pipeline;
-        private long _lockCounter;
+        private SignalScanner? _scanner;
+        private long _lockCounter = DateTime.UtcNow.Ticks;
         private HashSet<long> _activeKeys = new();
         private DateTime _lastPurge = DateTime.MinValue;
+        private long _lostAnalysisClips;
+        public RobotLogger Logger { get; }
 
         public RobotConfig Config { get; }
         public RobotStore Store { get; }
@@ -26,6 +30,7 @@ namespace RandySDR
         public ClipRecorder Recorder => _recorder;
         public string AiStatus { get; private set; } = "";
         public int AiBacklog => _aiQueue.Count;
+        public long LostAnalysisClips => Interlocked.Read(ref _lostAnalysisClips);
 
         /// <summary>Raised from worker threads when clips or lockouts changed; marshal to the UI thread before touching controls.</summary>
         public event Action? Changed;
@@ -37,8 +42,25 @@ namespace RandySDR
             _stepHz = stepHz;
             Whisper = new WhisperTranscriber(() => Config);
             Ollama = new OllamaClient(() => Config);
-            _recorder = new ClipRecorder(() => Config.ClipFolder, () => Config.MaxClipSeconds, () => Config.MinFreeGb);
-            _recorder.ClipCompleted += r => { if (!_analysisQueue.TryAdd(r)) System.Diagnostics.Debug.WriteLine("Robot analysis queue full"); };
+            _recorder = new ClipRecorder(() => Config.ClipFolder, () => Config.MaxClipSeconds, () => Config.MinFreeGb,
+                () => Config.SpeechEarlySkip, () => Config.SpeechEarlySkipSeconds);
+            Logger = new RobotLogger(config.ClipFolder, "robot-log.txt");
+            _recorder.ClipCompleted += r =>
+            {
+                if (!_analysisQueue.TryAdd(r))
+                {
+                    Interlocked.Increment(ref _lostAnalysisClips);
+                    Logger.LogError("RobotController", "Analysis queue full; clip not indexed", r.Path);
+                }
+                else
+                {
+                    Logger.LogInfo("ClipRecorder", $"Clip completed: {Path.GetFileName(r.Path)} ({r.Info.Hz / 1e6:F3} MHz)");
+                }
+            };
+            
+            // Log startup for debugging
+            Logger.LogInfo("RobotController", "RobotController initialized", 
+                $"Clip folder: {config.ClipFolder}, Transcribe: {Config.Transcribe}, Classify: {Config.Classify}");
             _analysisThread = new Thread(AnalysisLoop) { IsBackground = true, Name = "RobotAnalysis" };
             _aiThread = new Thread(AiLoop) { IsBackground = true, Name = "RobotAi" };
             _analysisThread.Start();
@@ -57,23 +79,32 @@ namespace RandySDR
 
         public void ApplyConfig()
         {
+            _recorder.InvalidateSpeechSkip();
             if (_pipeline != null)
-                _pipeline.AudioTap = Config.RecordClips ? _recorder.Enqueue : null;
-            if (!Config.RecordClips) _recorder.End("recording-off");
+                _pipeline.AudioTap = _scanner != null && Config.RecordClips ? _recorder.Enqueue : null;
+            if (!Config.RecordClips && _recorder.IsRecording) _recorder.End("recording-off");
         }
 
         public void AttachScanner(SignalScanner scanner)
         {
+            if (ReferenceEquals(_scanner, scanner)) return;
+            if (_scanner != null) DetachScanner(_scanner);
+            _scanner = scanner;
             scanner.SignalLocked += OnSignalLocked;
             scanner.SignalReleased += OnSignalReleased;
             scanner.ExtraLockout = IsAutoLockedOut;
+            ApplyConfig();
         }
 
         public void DetachScanner(SignalScanner scanner)
         {
+            if (!ReferenceEquals(_scanner, scanner)) return;
             scanner.SignalLocked -= OnSignalLocked;
             scanner.SignalReleased -= OnSignalReleased;
             scanner.ExtraLockout = null;
+            _scanner = null;
+            if (_recorder.IsRecording) _recorder.End("scan-stopped");
+            ApplyConfig();
         }
 
         private Func<string> _modeProvider = () => "";
@@ -91,8 +122,9 @@ namespace RandySDR
         public void EndRecording(string reason) => _recorder.End(reason);
 
         public bool EarlySkipDue =>
-            Config.EarlySkip && _recorder.IsRecording
-            && _recorder.LockAgeSeconds > Config.EarlySkipSeconds && _recorder.LockOpenSeconds < 0.2;
+            (Config.EarlySkip && _recorder.IsRecording
+            && _recorder.LockAgeSeconds > Config.EarlySkipSeconds && _recorder.LockOpenSeconds < 0.2)
+            || (Config.SpeechEarlySkip && _recorder.SpeechSkipDue);
 
         // ---------- lockouts ----------
 
@@ -144,6 +176,12 @@ namespace RandySDR
         public void SetStar(long clipId, bool star)
         {
             Store.SetStar(clipId, star);
+            if (star && Store.GetClip(clipId) is { } clip)
+            {
+                foreach (var l in Store.Lockouts("suggested", "active").Where(l => l.Key == clip.Key))
+                    Store.SetLockoutStatus(l.Id, "restored", DateTime.UtcNow);
+                RefreshLockoutCache();
+            }
             Changed?.Invoke();
         }
 
@@ -167,7 +205,7 @@ namespace RandySDR
         {
             var c = Store.GetClip(clipId);
             if (c == null) return;
-            try { if (File.Exists(c.Path)) File.Delete(c.Path); } catch { }
+            if (File.Exists(c.Path)) File.Delete(c.Path);
             Store.MarkDeleted(clipId);
             Changed?.Invoke();
         }
@@ -185,37 +223,73 @@ namespace RandySDR
         {
             try
             {
+                Logger.LogInfo("RobotController", "Analysis loop started");
                 foreach (var r in _analysisQueue.GetConsumingEnumerable(_cts.Token))
                 {
-                    try { ProcessClip(r); }
-                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Clip analysis failed: {ex.Message}"); }
+                    try 
+                    { 
+                        ProcessClip(r); 
+                    }
+                    catch (Exception ex)
+                    {
+                        Interlocked.Increment(ref _lostAnalysisClips);
+                        Logger.LogError("RobotController", $"Clip analysis failed", $"{Path.GetFileName(r.Path)}: {ex.Message}");
+                    }
                 }
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) 
+            { 
+                Logger.LogInfo("RobotController", "Analysis loop stopped");
+            }
         }
 
         private void ProcessClip(ClipResult r)
         {
             long key = LockoutPolicy.ChannelKey(r.Info.Hz, _stepHz());
-            ClipMetrics? m = r.Deleted ? null : ClipAnalyzer.AnalyzeFile(r.Path);
+            var options = new ClipAnalyzerOptions(Config.TriageMinSpeechSeconds, Config.TriageMinSpeechRatio, Config.TriageMaxCarrierRatio);
+            
+            Logger.LogDebug("ClipAnalyzer", $"Starting analysis for {Path.GetFileName(r.Path)}", 
+                $"Frequency: {r.Info.Hz / 1e6:F3} MHz, Mode: {r.Info.Mode}, Duration: {r.DurationSec:F2}s");
+            
+            ClipMetrics? m = r.Deleted ? null : ClipAnalyzer.AnalyzeFile(r.Path, options);
             long id = Store.InsertClip(r, m, key);
+
+            if (m != null)
+            {
+                Logger.LogInfo("ClipAnalyzer", $"Analysis complete: {Path.GetFileName(r.Path)}", 
+                    $"Class: {m.Class}, RMS: {m.RmsDb:F1}dB, Speech: {m.SpeechSec:F2}s ({m.SpeechRatio:P0}), Tone: {m.ToneRatio:P0}");
+            }
+            else
+            {
+                Logger.LogWarn("ClipAnalyzer", "Analysis skipped (deleted clip)", $"Clip ID: {id}");
+            }
 
             if (DateTime.UtcNow - _lastPurge > TimeSpan.FromHours(6))
             {
                 _lastPurge = DateTime.UtcNow;
-                Store.PurgeAudio(Config.VoiceRetentionDays, Config.CarrierRetentionDays, DateTime.UtcNow);
+                var removed = Store.PurgeAudio(Config.VoiceRetentionDays, Config.CarrierRetentionDays, DateTime.UtcNow);
+                Logger.LogInfo("RobotController", $"Audio purge completed", $"{removed} clips removed");
             }
 
             bool voiceish = m != null && m.Class is ClipClass.Voice or ClipClass.Uncertain && m.SpeechSec > 0.3;
             if (voiceish && Config.Transcribe)
             {
                 if (!_aiQueue.TryAdd(new AiJob(id, r.Path, r.Info.Hz, r.Info.Mode, key)))
+                {
                     Store.SetStatus(id, "ai-queue-full");
+                    Logger.LogWarn("RobotController", "AI queue full; clip marked as unclassified", $"Clip ID: {id}");
+                }
+                else
+                {
+                    Logger.LogInfo("RobotController", $"Queued for transcription", $"Clip ID: {id}, Class: {m?.Class}");
+                }
             }
             else if (m != null && m.Class != ClipClass.Voice)
             {
                 EvaluateLockout(key, r.Info.Hz);
+                Logger.LogDebug("LockoutPolicy", $"Lockout evaluation triggered", $"Key: {key}, Class: {m.Class}");
             }
+            
             Changed?.Invoke();
         }
 
@@ -223,48 +297,104 @@ namespace RandySDR
         {
             try
             {
+                Logger.LogInfo("RobotController", "AI loop started");
                 foreach (var job in _aiQueue.GetConsumingEnumerable(_cts.Token))
                 {
-                    try { RunAi(job, _cts.Token).GetAwaiter().GetResult(); }
-                    catch (OperationCanceledException) { throw; }
+                    try 
+                    { 
+                        RunAi(job, _cts.Token).GetAwaiter().GetResult(); 
+                    }
+                    catch (OperationCanceledException) when (_cts.IsCancellationRequested) { throw; }
                     catch (Exception ex)
                     {
                         AiStatus = "AI error: " + ex.Message;
                         Store.SetStatus(job.ClipId, "ai-failed");
+                        Logger.LogError("RobotController", $"AI processing failed", $"Clip ID: {job.ClipId}: {ex.Message}");
                     }
                     Changed?.Invoke();
                 }
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) 
+            { 
+                Logger.LogInfo("RobotController", "AI loop stopped");
+            }
         }
 
         private async Task RunAi(AiJob job, CancellationToken ct)
         {
+            var clipInfo = Store.GetClip(job.ClipId);
+            if (clipInfo is null || clipInfo.Deleted || !File.Exists(job.Path))
+            {
+                Logger.LogWarn("RobotController", "AI job skipped; clip not available", 
+                    $"Clip ID: {job.ClipId}, Exists: {File.Exists(job.Path)}");
+                return;
+            }
+
+            var fileName = Path.GetFileName(job.Path);
+            Logger.LogInfo("WhisperTranscriber", $"Starting transcription", $"{fileName} ({job.Hz / 1e6:F3} MHz)");
+            
             string text = await Whisper.TranscribeAsync(job.Path, ct);
             AiStatus = Whisper.Status;
             Store.SetTranscript(job.ClipId, text);
 
             if (text.Length == 0)
             {
-                var clip = Store.GetClip(job.ClipId);
-                if (clip?.Class == "UNCERTAIN") Store.SetClass(job.ClipId, "NOISE");
+                Logger.LogWarn("WhisperTranscriber", "No speech detected in transcript", 
+                    $"{fileName}: transcription returned empty string");
                 Store.SetStatus(job.ClipId, "no-speech");
-                EvaluateLockout(job.Key, job.Hz);
                 return;
             }
 
-            if (!Config.Classify) return;
+            Logger.LogInfo("WhisperTranscriber", $"Transcription complete", 
+                $"{fileName}: {text.Length} chars, {text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Count()} words");
+
+            if (!Config.Classify)
+            {
+                Logger.LogDebug("RobotController", "Classification disabled; skipping Ollama call");
+                return;
+            }
+
             try
             {
+                Logger.LogInfo("OllamaClient", $"Starting classification", 
+                    $"{fileName}: {text.Length} chars to classify");
+                
                 var c = await Ollama.ClassifyAsync(text, job.Hz / 1e6, job.Mode, ct);
-                if (c == null) { Store.SetStatus(job.ClipId, "unclassified"); return; }
+                
+                if (c == null)
+                {
+                    Logger.LogWarn("OllamaClient", "Classification returned null", $"{fileName}");
+                    Store.SetStatus(job.ClipId, "unclassified");
+                    return;
+                }
+
                 Store.SetClassification(job.ClipId, c.Category, c.Urgency, c.Summary, c.Confidence);
+                
+                Logger.LogInfo("OllamaClient", $"Classification complete", 
+                    $"{fileName}: {c.Category} (urgency {c.Urgency}, confidence {c.Confidence:P0})");
+                Logger.LogDebug("OllamaClient", "Summary", c.Summary);
+                Logger.LogDebug("OllamaClient", "Keywords", string.Join(", ", c.Keywords));
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) 
+            { 
+                throw; 
+            }
             catch (Exception ex)
             {
-                AiStatus = "Ollama unavailable: " + ex.Message;
+                // Provide helpful diagnostic message based on error type
+                string errorMsg = ex.Message.Contains("timed out") 
+                    ? $"Ollama timeout ({Config.OllamaTimeoutSeconds}s): server may be busy or slow"
+                    : ex.Message.Contains("HTTP 404")
+                        ? "Ollama API endpoint not found: check URL and server version"
+                        : ex.Message.Contains("HTTP")
+                            ? $"Ollama HTTP error: {ex.Message}"
+                            : ex.Message.Contains("Cannot connect")
+                                ? "Cannot connect to Ollama: is 'ollama serve' running?"
+                                : "Ollama unavailable: " + ex.Message;
+                
+                AiStatus = errorMsg;
                 Store.SetStatus(job.ClipId, "unclassified");
+                Logger.LogError("OllamaClient", $"Classification failed", $"{errorMsg}");
             }
         }
 
@@ -279,12 +409,28 @@ namespace RandySDR
             _analysisQueue.CompleteAdding();
             _aiQueue.CompleteAdding();
             _cts.Cancel();
-            _analysisThread.Join(3000);
-            _aiThread.Join(3000);
-            Whisper.Dispose();
-            Ollama.Dispose();
-            Store.Dispose();
-            _cts.Dispose();
+            bool analysisStopped = _analysisThread.Join(3000);
+            bool aiStopped = _aiThread.Join(3000);
+            void ReleaseResources()
+            {
+                Whisper.Dispose();
+                Ollama.Dispose();
+                Store.Dispose();
+                _analysisQueue.Dispose();
+                _aiQueue.Dispose();
+                _cts.Dispose();
+            }
+            if (analysisStopped && aiStopped) ReleaseResources();
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("Robot workers are still stopping; resource cleanup deferred.");
+                _ = Task.Run(() =>
+                {
+                    _analysisThread.Join();
+                    _aiThread.Join();
+                    ReleaseResources();
+                });
+            }
         }
     }
 }

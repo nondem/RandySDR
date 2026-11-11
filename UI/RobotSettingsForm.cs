@@ -1,4 +1,5 @@
 // RobotSettingsForm - modal dialog for Ollama, Whisper, recording/retention and early-skip settings.
+using System.Diagnostics;
 using Whisper.net.Ggml;
 
 namespace RandySDR
@@ -13,9 +14,17 @@ namespace RandySDR
         private readonly NumericUpDown _noSpeech = Num(2, 0, 1, 0.05m), _threads = Num(0, 0, 64, 1);
         private readonly NumericUpDown _voiceDays = Num(0, 1, 3650, 1), _junkDays = Num(0, 1, 3650, 1);
         private readonly NumericUpDown _maxClip = Num(0, 10, 3600, 10), _minFree = Num(1, 0, 10000, 1), _earlySkip = Num(1, 1, 60, 0.5m);
+        private readonly NumericUpDown _speechSkipSeconds = Num(0, 6, 120, 1);
+        private readonly CheckBox _speechSkip = new() { Text = "Enable experimental speech-based early skip", AutoSize = true };
+        private readonly NumericUpDown _triageSeconds = Num(2, 0.1m, 10, 0.1m), _triageVoice = Num(2, 0.01m, 1, 0.01m), _triageCarrier = Num(2, 0, 1, 0.01m);
         private readonly CheckBox _think = new() { Text = "Let the model \"think\" first (slower; for reasoning models)", AutoSize = true };
         private readonly Label _ollamaStatus = new() { AutoSize = true, ForeColor = Color.Gray };
         private CancellationTokenSource? _refreshCts;
+        
+        // Log viewer controls
+        private TextBox? _logViewer;
+        private ComboBox? _logFilter;
+        private Label? _logStatus;
 
         public RobotSettingsForm(RobotController robot)
         {
@@ -32,10 +41,12 @@ namespace RandySDR
             tabs.TabPages.Add(OllamaPage());
             tabs.TabPages.Add(WhisperPage());
             tabs.TabPages.Add(RecordingPage());
+            tabs.TabPages.Add(TriagePage());
+            tabs.TabPages.Add(LogsPage());
 
-            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 90, Height = 32 };
+            var ok = new Button { Text = "OK", Width = 90, Height = 32 };
             var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90, Height = 32 };
-            ok.Click += (_, _) => Apply();
+            ok.Click += (_, _) => { if (Apply()) { DialogResult = DialogResult.OK; Close(); } };
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 48, Padding = new Padding(8) };
             buttons.Controls.AddRange(new Control[] { cancel, ok });
             Controls.Add(tabs);
@@ -78,14 +89,32 @@ namespace RandySDR
             var page = new TabPage("Ollama (classification)");
             var g = Grid();
             Row(g, "Server URL", _url);
+            
+            var checkBtn = new Button { Text = "Check Server", AutoSize = true };
+            checkBtn.Click += async (s, e) =>
+            {
+                checkBtn.Enabled = false;
+                checkBtn.Text = "Checking...";
+                var statusMsg = await OllamaClient.CheckServerStatusAsync(_url.Text, CancellationToken.None);
+                MessageBox.Show(this, statusMsg, "Ollama Server Status", MessageBoxButtons.OK, 
+                    statusMsg.Contains("running") ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                checkBtn.Enabled = true;
+                checkBtn.Text = "Check Server";
+            };
+            
             var refresh = new Button { Text = "Refresh models", AutoSize = true };
             refresh.Click += async (_, _) => await RefreshModelsAsync();
             _model.DropDownStyle = ComboBoxStyle.DropDown;
             Row(g, "Model", _model, "Pick an installed model or type a name.");
-            var row = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
-            row.Controls.AddRange(new Control[] { refresh, _ollamaStatus });
+            
+            var row1 = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
+            row1.Controls.AddRange(new Control[] { checkBtn, refresh });
+            Row(g, "", row1);
+            
+            var row2 = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
+            row2.Controls.Add(_ollamaStatus);
             _ollamaStatus.Margin = new Padding(8, 8, 0, 0);
-            Row(g, "", row);
+            Row(g, "Status", row2);
             Row(g, "Temperature", _temp, "0 gives the most repeatable classifications.");
             Row(g, "Context (tokens)", _ctx, "Larger values use more VRAM.");
             Row(g, "Request timeout (s)", _timeout);
@@ -109,7 +138,7 @@ namespace RandySDR
             _whisperModel.Items.AddRange(Enum.GetNames<GgmlType>().Cast<object>().ToArray());
             Row(g, "Model", _whisperModel, "Downloaded on first use to %AppData%\\RandySDR\\models. LargeV3Turbo is best on an RTX GPU; Base/Small are faster and smaller.");
             Row(g, "Language", _language, "ISO code such as en, es, de; leave blank for automatic detection.");
-            Row(g, "No-speech threshold", _noSpeech, "Higher discards more doubtful segments as silence.");
+            Row(g, "No-speech threshold", _noSpeech, "Whisper's decoder threshold; a separate 0.7 segment filter also applies.");
             Row(g, "CPU threads (0 = auto)", _threads);
             _whisperPrompt.Multiline = true;
             _whisperPrompt.Height = 90;
@@ -140,9 +169,186 @@ namespace RandySDR
             Row(g, "Keep carrier/noise clips (days)", _junkDays);
             Row(g, "Max clip length (s)", _maxClip, "Long transmissions are split at this length.");
             Row(g, "Stop recording below (GB free)", _minFree);
-            Row(g, "Early-skip after (s)", _earlySkip, "Dead-carrier time before the scan resumes (needs the early-skip option on the Scan Robot card).");
+            Row(g, "Squelch early-skip (s)", _earlySkip, "Time before skipping a lock that has almost no open-squelch audio; enable it on the Scan Robot card.");
+            Row(g, "", _speechSkip, "Experimental: may miss weak or delayed speech. Stops evaluating a lock after speech-like or uncertain audio or dropped blocks.");
+            Row(g, "No-speech screening (s)", _speechSkipSeconds, "Minimum captured audio screened before skipping. Detection is heuristic, not a guarantee of no voice.");
             page.Controls.Add(g);
             return page;
+        }
+
+        private TabPage TriagePage()
+        {
+            var page = new TabPage("Audio triage");
+            var g = Grid();
+            Row(g, "Minimum voice seconds", _triageSeconds, "Minimum speech-like audio to label a clip voice.");
+            Row(g, "Minimum voice ratio", _triageVoice, "Fraction of the clip that must sound speech-like.");
+            Row(g, "Maximum carrier ratio", _triageCarrier, "Below this speech-like fraction, clips may be labeled carrier or noise. Higher values can miss voice.");
+            Row(g, "", new Label { Text = "These heuristics are not verified speech detection. Changing them can affect automatic lockouts; use suggested lockouts until tested with real recordings.", AutoSize = true, MaximumSize = new Size(390, 0) });
+            page.Controls.Add(g);
+            return page;
+        }
+
+        private TabPage LogsPage()
+        {
+            var page = new TabPage("Logs");
+            
+            // Use TableLayoutPanel for proper layout control
+            var table = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(8),
+                ColumnCount = 1,
+                RowCount = 3,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink
+            };
+            
+            // Row 0: Controls (buttons and filter) - fixed height
+            var controlsRow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 45,
+                Padding = new Padding(0, 0, 0, 8),
+                FlowDirection = FlowDirection.LeftToRight,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink
+            };
+            
+            var filterLevel = _logFilter = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 120,
+                Margin = new Padding(0, 4, 8, 0)
+            };
+            filterLevel.Items.AddRange(new[] { "All", "DEBUG", "INFO", "WARN", "ERROR" });
+            filterLevel.SelectedIndex = 0;
+            
+            var btnRefresh = new Button { Text = "Refresh", Width = 80, Height = 28, Margin = new Padding(0, 4, 8, 0) };
+            var btnClear = new Button { Text = "Clear", Width = 60, Height = 28, Margin = new Padding(0, 4, 8, 0) };
+            var btnSave = new Button { Text = "Save to File", Width = 100, Height = 28, Margin = new Padding(0, 4, 8, 0) };
+            
+            controlsRow.Controls.AddRange(new Control[] { filterLevel, btnRefresh, btnClear, btnSave });
+            
+            // Row 1: Status label - fixed height
+            _logStatus = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 25,
+                Padding = new Padding(0, 0, 0, 8),
+                ForeColor = Color.Gray,
+                AutoSize = true,
+                Text = "Ready"
+            };
+            
+            // Row 2: Log viewer - takes remaining space
+            _logViewer = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Both,
+                Font = new Font("Consolas", 9f),
+                BackColor = Color.Black,
+                ForeColor = Color.LightGreen,
+                AcceptsTab = true
+            };
+            
+            table.Controls.Add(controlsRow, 0, 0);
+            table.Controls.Add(_logStatus, 0, 1);
+            table.Controls.Add(_logViewer, 0, 2);
+            
+            // Set column to fill width, rows to auto/fill
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            table.RowStyles.Add(new RowStyle(SizeType.AutoSize, 0f));
+            table.RowStyles.Add(new RowStyle(SizeType.AutoSize, 0f));
+            table.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            
+            page.Controls.Add(table);
+            
+            // Refresh button handler
+            btnRefresh.Click += (s, e) =>
+            {
+                var levelFilter = filterLevel.SelectedItem?.ToString() ?? "All";
+                var entries = _robot.Logger.GetLast(500);
+                
+                var filtered = levelFilter == "All" 
+                    ? entries 
+                    : entries.Where(e => e.Level == levelFilter).ToList();
+                
+                _logViewer!.Text = FormatLogEntries(filtered);
+                _logStatus!.Text = $"Showing {filtered.Count} of {entries.Count} entries";
+            };
+            
+            // Clear button handler
+            btnClear.Click += (s, e) =>
+            {
+                _robot.Logger.Clear();
+                _logViewer!.Text = "Log buffer cleared. Click Refresh to reload.";
+                _logStatus!.Text = "Buffer cleared";
+            };
+            
+            // Save button handler
+            btnSave.Click += async (s, e) =>
+            {
+                var levelFilter = filterLevel.SelectedItem?.ToString() ?? "All";
+                var entries = _robot.Logger.GetLast(1000);
+                var filtered = levelFilter == "All" 
+                    ? entries 
+                    : entries.Where(e => e.Level == levelFilter).ToList();
+                
+                var content = FormatLogEntries(filtered);
+                
+                using var dlg = new SaveFileDialog
+                {
+                    Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                    FileName = $"robot-logs-{DateTime.UtcNow:yyyyMMdd-HHmmss}.txt",
+                    DefaultExt = "txt"
+                };
+                
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    try
+                    {
+                        await File.WriteAllTextAsync(dlg.FileName, content);
+                        MessageBox.Show(this, $"Log saved to {dlg.FileName}", "Success", 
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(this, $"Failed to save log: {ex.Message}", "Error", 
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            };
+            
+            // Initial load
+            btnRefresh.PerformClick();
+            
+            return page;
+        }
+
+        private static string FormatLogEntries(List<RobotLogEntry> entries)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Robot Workflow Logs - {entries.Count} entries");
+            sb.AppendLine(new string('=', 80));
+            sb.AppendLine();
+            
+            foreach (var entry in entries)
+            {
+                var timestamp = entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                sb.AppendLine($"[{timestamp}] [{entry.Level,-5}] [{entry.Source,-18}] {entry.Message}");
+                if (entry.Details != null)
+                {
+                    foreach (var line in entry.Details.Split('\n'))
+                    {
+                        sb.AppendLine($"  {line}");
+                    }
+                }
+                sb.AppendLine();
+            }
+            
+            return sb.ToString();
         }
 
         private void LoadValues(RobotConfig c)
@@ -167,6 +373,11 @@ namespace RandySDR
             _maxClip.Value = Clamp(_maxClip, c.MaxClipSeconds);
             _minFree.Value = Clamp(_minFree, (decimal)c.MinFreeGb);
             _earlySkip.Value = Clamp(_earlySkip, (decimal)c.EarlySkipSeconds);
+            _speechSkip.Checked = c.SpeechEarlySkip;
+            _speechSkipSeconds.Value = Clamp(_speechSkipSeconds, (decimal)c.SpeechEarlySkipSeconds);
+            _triageSeconds.Value = Clamp(_triageSeconds, (decimal)c.TriageMinSpeechSeconds);
+            _triageVoice.Value = Clamp(_triageVoice, (decimal)c.TriageMinSpeechRatio);
+            _triageCarrier.Value = Clamp(_triageCarrier, (decimal)c.TriageMaxCarrierRatio);
         }
 
         private static decimal Clamp(NumericUpDown n, decimal v) => Math.Clamp(v, n.Minimum, n.Maximum);
@@ -186,10 +397,14 @@ namespace RandySDR
             _ollamaStatus.Text = $"{models.Count} model(s) installed" + (models.Contains(current) ? "" : " - selected model not found");
         }
 
-        private void Apply()
+        private bool Apply()
         {
+            if (_triageCarrier.Value > _triageVoice.Value)
+            {
+                MessageBox.Show(this, "Maximum carrier ratio cannot exceed minimum voice ratio.", "Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
             var c = _robot.Config;
-            string oldWhisper = c.WhisperModel;
             c.OllamaUrl = _url.Text.Trim().Length > 0 ? _url.Text.Trim() : "http://localhost:11434";
             c.OllamaModel = _model.Text.Trim();
             c.OllamaTemperature = (double)_temp.Value;
@@ -209,9 +424,14 @@ namespace RandySDR
             c.MaxClipSeconds = (int)_maxClip.Value;
             c.MinFreeGb = (double)_minFree.Value;
             c.EarlySkipSeconds = (double)_earlySkip.Value;
+            c.SpeechEarlySkip = _speechSkip.Checked;
+            c.SpeechEarlySkipSeconds = (double)_speechSkipSeconds.Value;
+            c.TriageMinSpeechSeconds = (double)_triageSeconds.Value;
+            c.TriageMinSpeechRatio = (double)_triageVoice.Value;
+            c.TriageMaxCarrierRatio = (double)_triageCarrier.Value;
             c.Save();
-            if (!string.Equals(oldWhisper, c.WhisperModel, StringComparison.OrdinalIgnoreCase)) _robot.Whisper.Reload();
             _robot.ApplyConfig();
+            return true;
         }
     }
 }

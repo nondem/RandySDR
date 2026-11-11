@@ -77,13 +77,13 @@ VALUES($p,$s,$hz,$m,$l,$k,$d,$c,$sp,$del,$st)",
         }
 
         public void SetTranscript(long id, string text) =>
-            Exec("UPDATE Clips SET Transcript=$t, Status='transcribed' WHERE Id=$i", ("$t", text), ("$i", id));
+            Exec("UPDATE Clips SET Transcript=$t, Status='transcribed' WHERE Id=$i AND Deleted=0", ("$t", text), ("$i", id));
 
         public void SetClassification(long id, string category, int urgency, string summary, double confidence) =>
-            Exec("UPDATE Clips SET Category=$c, Urgency=$u, Summary=$s, Confidence=$f, Status='classified' WHERE Id=$i",
+            Exec("UPDATE Clips SET Category=$c, Urgency=$u, Summary=$s, Confidence=$f, Status='classified' WHERE Id=$i AND Deleted=0",
                 ("$c", category), ("$u", urgency), ("$s", summary), ("$f", confidence), ("$i", id));
 
-        public void SetStatus(long id, string status) => Exec("UPDATE Clips SET Status=$s WHERE Id=$i", ("$s", status), ("$i", id));
+        public void SetStatus(long id, string status) => Exec("UPDATE Clips SET Status=$s WHERE Id=$i AND Deleted=0", ("$s", status), ("$i", id));
         public void SetClass(long id, string cls) => Exec("UPDATE Clips SET Class=$c WHERE Id=$i", ("$c", cls), ("$i", id));
         public void SetStar(long id, bool star) => Exec("UPDATE Clips SET Starred=$v WHERE Id=$i", ("$v", star ? 1 : 0), ("$i", id));
         public void SetWrong(long id, bool wrong) => Exec("UPDATE Clips SET Wrong=$v WHERE Id=$i", ("$v", wrong ? 1 : 0), ("$i", id));
@@ -107,10 +107,10 @@ VALUES($p,$s,$hz,$m,$l,$k,$d,$c,$sp,$del,$st)",
             Query("SELECT COUNT(*) FROM Clips WHERE StartUtc>=$t AND Deleted=0", r => r.GetInt32(0), ("$t", Iso(utc))).First();
 
         public List<ClipHistoryEntry> History(long key, DateTime sinceUtc) =>
-            Query("SELECT StartUtc,Class,DurationSec FROM Clips WHERE Key=$k AND StartUtc>=$t AND Status<>'short'",
+            Query("SELECT StartUtc,Class,DurationSec,LockId FROM Clips WHERE Key=$k AND StartUtc>=$t AND Status<>'short'",
                 r => new ClipHistoryEntry(
                     DateTime.Parse(r.GetString(0), null, System.Globalization.DateTimeStyles.RoundtripKind),
-                    Enum.TryParse<ClipClass>(r.GetString(1), true, out var c) ? c : ClipClass.Uncertain, r.GetDouble(2)),
+                    Enum.TryParse<ClipClass>(r.GetString(1), true, out var c) ? c : ClipClass.Uncertain, r.GetDouble(2), r.GetInt64(3)),
                 ("$k", key), ("$t", Iso(sinceUtc)));
 
         public bool HasVoice(long key, DateTime sinceUtc) =>
