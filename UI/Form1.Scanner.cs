@@ -64,7 +64,7 @@ namespace RandySDR
             _trackThreshold = new TrackBar { Dock = DockStyle.Fill, AutoSize = false, Height = 32, Minimum = 3, Maximum = 40, TickFrequency = 3, Value = 8, Margin = new Padding(0, 0, 0, 0) };
             _numHold = NewNumeric(1, 0.5m, 120m, 0.5m);
             var holdTip = new ToolTip();
-            holdTip.SetToolTip(_numHold, "Time to wait after signal drops before resuming scanning. In 'Stay until signal drops' mode, the scanner will force release after 15 seconds even if signal is still present (prevents getting stuck on noisy frequencies).");
+            holdTip.SetToolTip(_numHold, "In 'Stay until signal drops' mode, wait this long after the signal drops before resuming. In fixed-time mode, stay for this long regardless of signal.");
             _numSettle = NewNumeric(0, 40m, 1000m, 10m);
             _chkAutoMode = new CheckBox { Text = "Auto-select mode by band", AutoSize = true, Margin = new Padding(0, 2, 16, 2) };
             _chkLog = new CheckBox { Text = "Log detections", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
@@ -602,7 +602,7 @@ namespace RandySDR
             Set(groupBox2, open, open ? null : "OPEN DEVICE");
             Set(groupBox3, open, open ? null : "OPEN DEVICE");
             Set(groupBox4, open, open ? null : "OPEN DEVICE");
-            Set(groupBoxAudio, open, open ? null : "OPEN DEVICE");
+            Set(groupBoxAudio, true, open ? null : "OPEN DEVICE", open ? blue : amber);
             Set(groupBox6, spectrumOn, spectrumOn ? null : open ? "OFF" : "OPEN DEVICE");
 
             bool usable = receiving || running;
@@ -620,9 +620,12 @@ namespace RandySDR
             Set(_cardLock, usable || hasLock, hasLock ? $"{_lstLockouts.Items.Count} SKIPPED" : null);
 
             _cardRange.Enabled = true;
-            foreach (var c in new[] { _cardRange, _cardDetect, _cardBehave, _cardControl })
-                foreach (Control child in c.Controls)
-                    if (child is not DashboardResizeHandle) child.Enabled = c.Active;
+            // Enable controls for all device-dependent cards when device is open
+            var deviceCards = new[] { groupBox2, groupBox3, groupBox4, groupBoxAudio, _cardRange, _cardDetect, _cardBehave, _cardControl };
+            foreach (var c in deviceCards)
+                if (c != null)
+                    foreach (Control child in c.Controls)
+                        if (child is not DashboardResizeHandle) child.Enabled = c.Active;
         }
 
         private void LockOutCurrent()

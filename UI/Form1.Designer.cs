@@ -776,7 +776,7 @@
             trackVolume.TabIndex = 19;
             trackVolume.TickFrequency = 10;
             trackVolume.Value = 1;
-            trackVolume.Scroll += trackVolume_Scroll;
+            trackVolume.ValueChanged += trackVolume_ValueChanged;
             // 
             // lblSquelch
             // 

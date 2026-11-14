@@ -65,7 +65,7 @@ namespace RandySDR
         {
             if (_chkLinkSquelch == null || _loadingScanUi) return;
             bool linked = SquelchLinked;
-            trackSquelch.Enabled = !linked && !_squelchAutoSampling && trackVolume.Enabled;
+            trackSquelch.Enabled = !linked && !_squelchAutoSampling && btnClose.Enabled;
             _btnSquelchAuto.Enabled = !linked && !_squelchAutoSampling && btnStop.Enabled
                 && (_scanner == null || _scanner.State == ScanState.Idle);
             _numSquelchOffset.Enabled = linked;

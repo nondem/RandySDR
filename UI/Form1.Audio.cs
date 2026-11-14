@@ -3,7 +3,7 @@ namespace RandySDR
 {
     public partial class Form1
     {
-        private void trackVolume_Scroll(object sender, EventArgs e)
+        private void trackVolume_ValueChanged(object? sender, EventArgs e)
         {
             lblVolume.Text = $"Volume: {trackVolume.Value}%";
             UpdateDemodulatorSettings();
@@ -19,7 +19,7 @@ namespace RandySDR
         private Panel _squelchMarker = null!;
         private Button _btnSquelchAuto = null!;
         private Button _btnMute = null!;
-        private bool _userMuted;
+        private bool _userMuted = true;
         private bool _squelchAutoSampling;
 
         private void UpdateSquelchUi()
@@ -100,7 +100,7 @@ namespace RandySDR
             progressSignal.Controls.Add(_squelchMarker);
             progressSignal.Resize += (_, _) => { _squelchMarker.Height = progressSignal.Height; UpdateSquelchUi(); };
 
-            _btnMute = new Button { Text = "Mute", Dock = DockStyle.Fill, Margin = new Padding(4, 6, 0, 6) };
+            _btnMute = new Button { Text = _userMuted ? "Unmute" : "Mute", Dock = DockStyle.Fill, Margin = new Padding(4, 6, 0, 6) };
             _btnMute.Click += btnMute_Click;
             var muteTip = new ToolTip();
             muteTip.SetToolTip(_btnMute, "Mute or unmute audio without changing the volume.");
@@ -159,10 +159,16 @@ namespace RandySDR
 
         private void UpdateDemodulatorSettings()
         {
+            if (_pipeline != null)
+            {
+                _pipeline.AudioVolume = trackVolume.Value / 50f;
+                _pipeline.AudioMuted = _userMuted || _scanMuted;
+            }
+
             if (_demodulator == null)
                 return;
 
-            _demodulator.Volume = _userMuted || _scanMuted ? 0f : trackVolume.Value / 50.0f;
+            _demodulator.Volume = 1f;
             _demodulator.SquelchThresholdDb = CurrentSquelchThreshold();
             _demodulator.DeEmphasisEnabled = chkDeEmphasis.Checked;
             _demodulator.Mode = GetDemodulationMode();

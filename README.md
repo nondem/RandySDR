@@ -13,6 +13,17 @@ An RTL-SDR receiver for SDR Blog V4 hardware with scanning, spectrum analysis an
 **Scanning with squelch lock**  
 The app can scan a band for signals above a threshold. When "Link squelch to detection threshold" is enabled, the in‑channel audio squelch follows the noise floor plus the scan threshold plus a small offset you set. This keeps the squelch behavior consistent across the band and makes scanning quieter. Run one scan to learn the current noise floor; until then, linked squelch shows "linked (scan to learn)".
 
+"Stay until signal drops" holds the channel until the signal has been absent for the configured hold time; it does not impose a 15-second limit. Use fixed-time hold or Resume to leave a continuous carrier. Optional robot early-skip settings can also resume scanning early. Recordings can still be split by a squelch gap or the configured maximum clip length.
+
+The Scan Robot shows a separate status and heuristic audio class for each clip. When transcription is enabled, all retained incoming clips are queued for Whisper, even if triage identifies carrier, noise, tone, or inconclusive audio. This can increase the AI backlog; `ai-queue-full` or `ai-failed` clips can be retried with Re-run AI. `no-speech` means transcription returned no speech, not proof that speech was absent. When transcription is disabled, triage-only clips can show `non-voice` or `inconclusive`. The Wrong and Re-run AI actions can be used to review earlier clips.
+
+**ScreenerBot (optional robot scan mode)**  
+For wide, noisy ranges, enable **ScreenerBot (next lock)** on the Scan Robot card and start a robot scan with **Record signals** enabled. Normal scans and robot scans without ScreenerBot are unchanged. During each lock, the recorder screens open-squelch audio on its worker thread; the separate **ScreenerBot settings** control sets the minimum screening time (four seconds by default). Mode and settings changes take effect at the next lock. Existing squelch, hold and early-skip settings still apply.
+
+When consecutive windows appear to be static, a carrier or a tone, ScreenerBot retains the partial clip, displays a `screened-*` reason, and resumes scanning. Filtered clips are not automatically transcribed or used for automatic lockouts; play them, mark a decision **Wrong**, or explicitly select **Re-run AI**. Clip details retain the reason even after reprocessing. Marking a filtered clip wrong contributes to the correction count in ScreenerBot settings, where a longer duration can be suggested and applied only with your approval.
+
+Screening is heuristic: speech, digital signals, or transmissions that begin after noise can be missed. Uncertain speech-like audio, closed squelch, dropped recorder blocks, or reaching the maximum clip length prevent screening out that lock. The retained snippet cannot recover audio after the scanner resumes, and normal retention settings still apply. The mode has not been validated against every radio environment; disable it when missing a transmission is unacceptable.
+
 **Spectrum analyzer**  
 A real‑time FFT display with Auto range and manual controls for Zoom, Range and Reference level. You can tune while viewing the spectrum. The spectrum is off by default on startup to save time.
 

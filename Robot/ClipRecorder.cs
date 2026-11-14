@@ -18,7 +18,8 @@ namespace RandySDR
         public const double MinClipSec = 0.7;       // shorter clips keep metadata only
 
         private enum Kind { Audio, Begin, End, Sync, Quit }
-        private sealed record Item(Kind Kind, float[]? Audio = null, bool SquelchOpen = true, ClipInfo? Info = null, string? Reason = null, ManualResetEventSlim? Done = null);
+        private sealed record Item(Kind Kind, float[]? Audio = null, bool SquelchOpen = true, ClipInfo? Info = null, string? Reason = null, ManualResetEventSlim? Done = null, double? ScreenerSeconds = null);
+        private sealed record ScreeningState(long LockId, string Status, string? Reason);
 
         private readonly BlockingCollection<Item> _queue = new(new ConcurrentQueue<Item>(), 600);
         private readonly Thread _thread;
@@ -36,6 +37,8 @@ namespace RandySDR
         private volatile bool _segmentOpen;
         private readonly List<float[]> _pendingGap = new();
         private SpeechSkipDetector? _speechDetector;
+        private ScreenerDetector? _screener;
+        private volatile ScreeningState? _screening;
         private DateTime _nextDiskRetry;
 
         private long _dropped;
@@ -56,6 +59,15 @@ namespace RandySDR
         public string? LastError { get; private set; }
         public bool SpeechSkipDue => _lockActive && _speechSkipEligible && _speechSkipDue && Interlocked.Read(ref _pendingAudioBlocks) == 0
             && Interlocked.Read(ref _dropped) == Interlocked.Read(ref _droppedAtLock);
+        public string? ScreeningStatus => _lockActive && _screening is { } state
+            && state.LockId == Interlocked.Read(ref _currentLockId)
+                ? Interlocked.Read(ref _dropped) != Interlocked.Read(ref _droppedAtLock)
+                    ? "continuing: recorder dropped audio" : state.Status
+                : null;
+        public string? ScreeningReason => _lockActive && _screening is { } state
+            && state.LockId == Interlocked.Read(ref _currentLockId)
+            && Interlocked.Read(ref _pendingAudioBlocks) == 0
+            && Interlocked.Read(ref _dropped) == Interlocked.Read(ref _droppedAtLock) ? state.Reason : null;
 
         /// <summary>Raised on the recorder thread when a clip file is closed.</summary>
         public event Action<ClipResult>? ClipCompleted;
@@ -72,7 +84,7 @@ namespace RandySDR
             _thread.Start();
         }
 
-        public void Begin(ClipInfo info)
+        public void Begin(ClipInfo info, double? screenerSeconds = null)
         {
             _lockActive = true;
             Interlocked.Exchange(ref _lockStartTick, Environment.TickCount64);
@@ -81,7 +93,8 @@ namespace RandySDR
             Interlocked.Exchange(ref _currentLockId, info.LockId);
             _speechSkipEligible = _speechSkipEnabled();
             _speechSkipDue = false;
-            Post(new Item(Kind.Begin, Info: info));
+            _screening = screenerSeconds.HasValue ? new ScreeningState(info.LockId, "analyzing", null) : null;
+            Post(new Item(Kind.Begin, Info: info, ScreenerSeconds: screenerSeconds));
         }
 
         public void End(string reason)
@@ -131,6 +144,7 @@ namespace RandySDR
                             if (_segmentOpen) CloseSegment("new-lock");
                             _info = item.Info;
                             _speechDetector = new SpeechSkipDetector(SampleRate);
+                            _screener = item.ScreenerSeconds is double seconds ? new ScreenerDetector(SampleRate, seconds) : null;
                             _nextDiskRetry = DateTime.MinValue;
                             _trimLeft = (long)(LockTrimSec * SampleRate);
                             OpenSegment();
@@ -139,6 +153,7 @@ namespace RandySDR
                             CloseSegment(item.Reason ?? "released");
                             _info = null;
                             _speechDetector = null;
+                            _screener = null;
                             _speechSkipDue = false;
                             break;
                         case Kind.Audio:
@@ -158,6 +173,9 @@ namespace RandySDR
                 {
                     LastError = ex.Message;
                     System.Diagnostics.Debug.WriteLine($"ClipRecorder error: {ex.Message}");
+                    _screener?.Invalidate();
+                    if (_info != null && _info.LockId == Interlocked.Read(ref _currentLockId) && _screening != null)
+                        _screening = new ScreeningState(_info.LockId, "continuing: recorder error", null);
                     try { _writer?.Dispose(); } catch { }
                     _writer = null;
                     _segmentOpen = false;
@@ -202,6 +220,14 @@ namespace RandySDR
             }
             var data = start == 0 ? audio : audio[start..];
 
+            if (_screener != null)
+            {
+                if (squelchOpen) _screener.Add(data);
+                else _screener.Invalidate();
+                if (_info.LockId == Interlocked.Read(ref _currentLockId))
+                    _screening = new ScreeningState(_info.LockId, _screener.Status, _screener.Reason);
+            }
+
             if (_speechSkipEligible && _speechSkipEnabled() && _speechDetector != null)
             {
                 _speechDetector.Add(data);
@@ -230,6 +256,12 @@ namespace RandySDR
             _writer!.Write(data);
             if (_writer.SampleCount >= (long)_maxClipSec() * SampleRate)
             {
+                if (_screener != null)
+                {
+                    _screener.Invalidate();
+                    if (_info.LockId == Interlocked.Read(ref _currentLockId))
+                        _screening = new ScreeningState(_info.LockId, "continuing: clip length limit reached", null);
+                }
                 var info = _info;
                 CloseSegment("max-length");
                 _info = info;
@@ -253,6 +285,7 @@ namespace RandySDR
             {
                 try { File.Delete(path); } catch { }
             }
+
             ClipCompleted?.Invoke(new ClipResult(_info, path, _segStart, dur, _openSamples / (double)SampleRate, reason, deleted));
         }
 

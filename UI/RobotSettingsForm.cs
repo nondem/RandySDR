@@ -4,6 +4,21 @@ using Whisper.net.Ggml;
 
 namespace RandySDR
 {
+    /// <summary>
+    /// Extension methods for Control to safely update UI from background threads.
+    /// </summary>
+    public static class ControlExtensions
+    {
+        public static void InvokeOnUIThread<T>(this T? control, Action<T> action) where T : Control
+        {
+            if (control is null) return;
+            if (control.InvokeRequired)
+                control.BeginInvoke(action);
+            else
+                action(control);
+        }
+    }
+
     public sealed class RobotSettingsForm : Form
     {
         private readonly RobotController _robot;
@@ -24,17 +39,20 @@ namespace RandySDR
         // Log viewer controls
         private TextBox? _logViewer;
         private ComboBox? _logFilter;
+        private ComboBox? _logSource;
         private Label? _logStatus;
+        private Label? _startupWarning;
 
         public RobotSettingsForm(RobotController robot)
         {
             _robot = robot;
             Text = "Settings";
             StartPosition = FormStartPosition.CenterParent;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = MinimizeBox = false;
-            ShowInTaskbar = false;
-            ClientSize = new Size(640, 600);
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
+            MinimizeBox = true;
+            ShowInTaskbar = true;
+            MinimumSize = new Size(500, 400);
             Font = new Font("Segoe UI", 9f);
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -198,21 +216,30 @@ namespace RandySDR
                 Dock = DockStyle.Fill,
                 Padding = new Padding(8),
                 ColumnCount = 1,
-                RowCount = 3,
+                RowCount = 4,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink
             };
             
-            // Row 0: Controls (buttons and filter) - fixed height
+            // Row 0: Log source selector and controls - fixed height
             var controlsRow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 45,
+                Height = 50,
                 Padding = new Padding(0, 0, 0, 8),
                 FlowDirection = FlowDirection.LeftToRight,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink
             };
+            
+            var logSource = _logSource = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 150,
+                Margin = new Padding(0, 4, 8, 0)
+            };
+            logSource.Items.AddRange(new[] { "Robot Workflow Logs", "Startup Errors", "All Logs" });
+            logSource.SelectedIndex = 0;
             
             var filterLevel = _logFilter = new ComboBox
             {
@@ -227,7 +254,7 @@ namespace RandySDR
             var btnClear = new Button { Text = "Clear", Width = 60, Height = 28, Margin = new Padding(0, 4, 8, 0) };
             var btnSave = new Button { Text = "Save to File", Width = 100, Height = 28, Margin = new Padding(0, 4, 8, 0) };
             
-            controlsRow.Controls.AddRange(new Control[] { filterLevel, btnRefresh, btnClear, btnSave });
+            controlsRow.Controls.AddRange(new Control[] { logSource, filterLevel, btnRefresh, btnClear, btnSave });
             
             // Row 1: Status label - fixed height
             _logStatus = new Label
@@ -240,7 +267,19 @@ namespace RandySDR
                 Text = "Ready"
             };
             
-            // Row 2: Log viewer - takes remaining space
+            // Row 2: Warning label for startup errors - fixed height
+            _startupWarning = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 30,
+                Padding = new Padding(0, 0, 0, 8),
+                ForeColor = Color.OrangeRed,
+                AutoSize = true,
+                Text = "",
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
+            
+            // Row 3: Log viewer - takes remaining space
             _logViewer = new TextBox
             {
                 Dock = DockStyle.Fill,
@@ -255,33 +294,75 @@ namespace RandySDR
             
             table.Controls.Add(controlsRow, 0, 0);
             table.Controls.Add(_logStatus, 0, 1);
-            table.Controls.Add(_logViewer, 0, 2);
+            table.Controls.Add(_startupWarning, 0, 2);
+            table.Controls.Add(_logViewer, 0, 3);
             
             // Set column to fill width, rows to auto/fill
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            table.RowStyles.Add(new RowStyle(SizeType.AutoSize, 0f));
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize, 0f));
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize, 0f));
             table.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
             
             page.Controls.Add(table);
             
+            // Log source change handler
+            logSource.SelectedIndexChanged += (s, e) =>
+            {
+                var source = logSource.SelectedItem?.ToString() ?? "Robot Workflow Logs";
+                if (source == "Startup Errors")
+                {
+                    _logFilter.Enabled = false;
+                    btnClear.Enabled = false;
+                    _startupWarning.Text = "Startup errors are read-only. Use 'All Logs' or 'Robot Workflow Logs' to clear.";
+                }
+                else
+                {
+                    _logFilter.Enabled = true;
+                    btnClear.Enabled = true;
+                    _startupWarning.Text = "";
+                }
+                btnRefresh.PerformClick();
+            };
+            
             // Refresh button handler
             btnRefresh.Click += (s, e) =>
             {
+                var source = logSource.SelectedItem?.ToString() ?? "Robot Workflow Logs";
                 var levelFilter = filterLevel.SelectedItem?.ToString() ?? "All";
-                var entries = _robot.Logger.GetLast(500);
                 
-                var filtered = levelFilter == "All" 
-                    ? entries 
-                    : entries.Where(e => e.Level == levelFilter).ToList();
-                
-                _logViewer!.Text = FormatLogEntries(filtered);
-                _logStatus!.Text = $"Showing {filtered.Count} of {entries.Count} entries";
+                if (source == "Startup Errors")
+                {
+                    LoadStartupErrors();
+                }
+                else if (source == "All Logs")
+                {
+                    LoadAllLogs(levelFilter);
+                }
+                else
+                {
+                    var entries = _robot.Logger.GetLast(500);
+                    
+                    var filtered = levelFilter == "All" 
+                        ? entries 
+                        : entries.Where(e => e.Level == levelFilter).ToList();
+                    
+                    _logViewer!.Text = FormatLogEntries(filtered);
+                    _logStatus!.Text = $"Showing {filtered.Count} of {entries.Count} robot workflow entries";
+                }
             };
             
             // Clear button handler
             btnClear.Click += (s, e) =>
             {
+                var source = logSource.SelectedItem?.ToString() ?? "Robot Workflow Logs";
+                if (source == "Startup Errors")
+                {
+                    MessageBox.Show(this, "Cannot clear startup errors. They are read-only system logs.", 
+                        "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                
                 _robot.Logger.Clear();
                 _logViewer!.Text = "Log buffer cleared. Click Refresh to reload.";
                 _logStatus!.Text = "Buffer cleared";
@@ -290,18 +371,37 @@ namespace RandySDR
             // Save button handler
             btnSave.Click += async (s, e) =>
             {
+                var source = logSource.SelectedItem?.ToString() ?? "Robot Workflow Logs";
                 var levelFilter = filterLevel.SelectedItem?.ToString() ?? "All";
-                var entries = _robot.Logger.GetLast(1000);
-                var filtered = levelFilter == "All" 
-                    ? entries 
-                    : entries.Where(e => e.Level == levelFilter).ToList();
                 
-                var content = FormatLogEntries(filtered);
+                string content;
+                string fileName;
+                
+                if (source == "Startup Errors")
+                {
+                    content = GetStartupErrorContent();
+                    fileName = $"startup-errors-{DateTime.UtcNow:yyyyMMdd-HHmmss}.txt";
+                }
+                else if (source == "All Logs")
+                {
+                    content = FormatAllLogs(levelFilter);
+                    fileName = $"all-logs-{DateTime.UtcNow:yyyyMMdd-HHmmss}.txt";
+                }
+                else
+                {
+                    var entries = _robot.Logger.GetLast(1000);
+                    var filtered = levelFilter == "All" 
+                        ? entries 
+                        : entries.Where(e => e.Level == levelFilter).ToList();
+                    
+                    content = FormatLogEntries(filtered);
+                    fileName = $"robot-logs-{DateTime.UtcNow:yyyyMMdd-HHmmss}.txt";
+                }
                 
                 using var dlg = new SaveFileDialog
                 {
                     Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
-                    FileName = $"robot-logs-{DateTime.UtcNow:yyyyMMdd-HHmmss}.txt",
+                    FileName = fileName,
                     DefaultExt = "txt"
                 };
                 
@@ -325,6 +425,131 @@ namespace RandySDR
             btnRefresh.PerformClick();
             
             return page;
+        }
+        
+        private void LoadStartupErrors()
+        {
+            var errorLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "startup-error.log");
+            if (!File.Exists(errorLog))
+            {
+                _logViewer?.InvokeOnUIThread(c => c.Text = "No startup errors found.");
+                _logStatus?.InvokeOnUIThread(c => c.Text = "No errors recorded");
+                _startupWarning?.InvokeOnUIThread(c => c.Text = "");
+                return;
+            }
+            
+            var content = File.ReadAllText(errorLog);
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                _logViewer?.InvokeOnUIThread(c => c.Text = "Startup error log is empty.");
+                _logStatus?.InvokeOnUIThread(c => c.Text = "No errors recorded");
+                _startupWarning?.InvokeOnUIThread(c => c.Text = "");
+                return;
+            }
+            
+            _logViewer?.InvokeOnUIThread(c => c.Text = content.Trim());
+            var lineCount = content.Split('\n').Length;
+            _logStatus?.InvokeOnUIThread(c => c.Text = $"Startup error log loaded ({lineCount} lines)");
+            _startupWarning?.InvokeOnUIThread(c => c.Text = "⚠️ Startup errors detected. Review the stack trace above for diagnostics.");
+        }
+        
+        private string GetStartupErrorContent()
+        {
+            var errorLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "startup-error.log");
+            if (!File.Exists(errorLog))
+                return "No startup errors found.\n\n";
+            
+            var content = File.ReadAllText(errorLog);
+            if (string.IsNullOrWhiteSpace(content))
+                return "Startup error log is empty.\n\n";
+            
+            return $"=== Startup Error Log ===\n\n{content.Trim()}\n\n";
+        }
+        
+        private void LoadAllLogs(string levelFilter)
+        {
+            var robotEntries = _robot.Logger.GetLast(1000);
+            var filteredRobot = levelFilter == "All" 
+                ? robotEntries 
+                : robotEntries.Where(e => e.Level == levelFilter).ToList();
+            
+            var startupErrorContent = GetStartupErrorContent();
+            var hasErrors = !startupErrorContent.Contains("No startup errors") && 
+                           !startupErrorContent.Contains("empty");
+            
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("=== ALL LOGS ===\n");
+            sb.AppendLine($"Robot Workflow Logs - {filteredRobot.Count} entries\n");
+            sb.AppendLine(new string('=', 80));
+            sb.AppendLine();
+            
+            foreach (var entry in filteredRobot)
+            {
+                var timestamp = entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                sb.AppendLine($"[{timestamp}] [{entry.Level,-5}] [{entry.Source,-18}] {entry.Message}");
+                if (entry.Details != null)
+                {
+                    foreach (var line in entry.Details.Split('\n'))
+                    {
+                        sb.AppendLine($"  {line}");
+                    }
+                }
+                sb.AppendLine();
+            }
+            
+            if (hasErrors)
+            {
+                sb.AppendLine("\n" + new string('=', 80));
+                sb.AppendLine("\n=== STARTUP ERRORS ===\n");
+                sb.AppendLine(startupErrorContent);
+            }
+            
+            var finalText = sb.ToString();
+            _logViewer?.InvokeOnUIThread(c => c.Text = finalText);
+            var statusText = $"Robot: {filteredRobot.Count} entries";
+            if (hasErrors) statusText += " | Startup errors present";
+            _logStatus?.InvokeOnUIThread(c => c.Text = statusText);
+        }
+        
+        private string FormatAllLogs(string levelFilter)
+        {
+            var robotEntries = _robot.Logger.GetLast(1000);
+            var filteredRobot = levelFilter == "All" 
+                ? robotEntries 
+                : robotEntries.Where(e => e.Level == levelFilter).ToList();
+            
+            var startupErrorContent = GetStartupErrorContent();
+            var hasErrors = !startupErrorContent.Contains("No startup errors") && 
+                           !startupErrorContent.Contains("empty");
+            
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("=== ALL LOGS ===\n");
+            sb.AppendLine($"Robot Workflow Logs - {filteredRobot.Count} entries\n");
+            sb.AppendLine(new string('=', 80));
+            sb.AppendLine();
+            
+            foreach (var entry in filteredRobot)
+            {
+                var timestamp = entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                sb.AppendLine($"[{timestamp}] [{entry.Level,-5}] [{entry.Source,-18}] {entry.Message}");
+                if (entry.Details != null)
+                {
+                    foreach (var line in entry.Details.Split('\n'))
+                    {
+                        sb.AppendLine($"  {line}");
+                    }
+                }
+                sb.AppendLine();
+            }
+            
+            if (hasErrors)
+            {
+                sb.AppendLine("\n" + new string('=', 80));
+                sb.AppendLine("\n=== STARTUP ERRORS ===\n");
+                sb.AppendLine(startupErrorContent);
+            }
+            
+            return sb.ToString();
         }
 
         private static string FormatLogEntries(List<RobotLogEntry> entries)

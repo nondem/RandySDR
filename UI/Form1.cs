@@ -81,16 +81,42 @@ namespace RandySDR
             chkOffsetTuning.Checked = false;
 
             // Some designer states can leave TrackBars with default ranges.
-            // Normalize ranges before assigning startup values.
+            // Normalize ranges BEFORE assigning startup values.
             if (trackVolume.Maximum < 100) trackVolume.Maximum = 100;
             if (trackVolume.Minimum > 0) trackVolume.Minimum = 0;
             if (trackSquelch.Maximum < 100) trackSquelch.Maximum = 100;
             if (trackSquelch.Minimum > 0) trackSquelch.Minimum = 0;
 
-            // Start at 1% to prevent sudden loud noise on first startup
-            trackVolume.Value = Math.Clamp(1, trackVolume.Minimum, trackVolume.Maximum);
+            // Ensure Minimum is set to 0 for trackSquelch if not already done by designer
+            if (trackSquelch.Minimum == 0 && trackSquelch.Maximum >= 100)
+            {
+                // Designer may have left Minimum at default, ensure it's valid
+                try
+                {
+                    trackSquelch.Minimum = 0;
+                }
+                catch { /* Ignore if already set */ }
+            }
+
+            // Start muted; preserve the low startup volume when the user unmutes.
+            // Use safe value assignment with bounds checking
+            var volMin = Math.Max(0, trackVolume.Minimum);
+            var volMax = Math.Min(100, trackVolume.Maximum);
+            trackVolume.Value = Math.Clamp(1, volMin, volMax);
             lblVolume.Text = $"Volume: {trackVolume.Value}%";
-            trackSquelch.Value = Math.Clamp(0, trackSquelch.Minimum, trackSquelch.Maximum);
+
+            // Squelch: start at minimum (closed)
+            var squelchMin = Math.Max(0, trackSquelch.Minimum);
+            var squelchMax = Math.Min(100, trackSquelch.Maximum);
+            try
+            {
+                trackSquelch.Value = Math.Clamp(0, squelchMin, squelchMax);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // Fallback: set to middle value if bounds are invalid
+                trackSquelch.Value = 50;
+            }
 
             chkDeEmphasis.Checked = true;
             chkTunerAGC.Checked = false;
@@ -123,7 +149,7 @@ namespace RandySDR
             chkTunerAGC.Enabled = deviceOpen;
             chkRtlAGC.Enabled = deviceOpen;
             trackTunerGain.Enabled = deviceOpen && !chkTunerAGC.Checked;
-            trackVolume.Enabled = deviceOpen;
+            trackVolume.Enabled = true;
             trackSquelch.Enabled = deviceOpen;
             chkDeEmphasis.Enabled = deviceOpen;
             chkSpectrumEnabled.Enabled = deviceOpen;

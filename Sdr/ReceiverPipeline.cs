@@ -33,6 +33,16 @@ namespace RandySDR
         public int QueueSize => _usbBuffer.CurrentQueueSize;
         public int BuffersDropped => _usbBuffer.TotalBuffersDropped;
         public bool IsRunning => _dspRunning;
+        public float AudioVolume
+        {
+            get => _audio.Volume;
+            set => _audio.Volume = value;
+        }
+        public bool AudioMuted
+        {
+            get => _audio.Muted;
+            set => _audio.Muted = value;
+        }
 
         private volatile Action<float[], bool>? _audioTap;
 

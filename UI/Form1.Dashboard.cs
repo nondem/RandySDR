@@ -289,10 +289,10 @@ namespace RandySDR
                     int y = Math.Clamp(state.Y, 0, 20000);
                     if (layout.ViewportWidth > _workspaceScroll.ClientSize.Width && x < layout.ViewportWidth
                         && x >= _workspaceScroll.ClientSize.Width)
-                        x = Math.Max(0, _workspaceScroll.ClientSize.Width - Math.Min(width, 120));
+                        x = Math.Max(0, _workspaceScroll.ClientSize.Width - width);
                     if (layout.ViewportHeight > _workspaceScroll.ClientSize.Height && y < layout.ViewportHeight
                         && y >= _workspaceScroll.ClientSize.Height)
-                        y = Math.Max(0, _workspaceScroll.ClientSize.Height - card.HeaderHeight);
+                        y = Math.Max(0, _workspaceScroll.ClientSize.Height - height);
                     card.Location = new Point(x, y);
                     _cardHeights[card] = height;
                     card.SetCollapsed(state.Collapsed);

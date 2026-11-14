@@ -10,6 +10,7 @@ namespace RandySDR
         private sealed record AiJob(long ClipId, string Path, double Hz, string Mode, long Key);
 
         private readonly Func<double> _stepHz;
+        private readonly Func<string, CancellationToken, Task<string>> _transcribe;
         private readonly ClipRecorder _recorder;
         private readonly BlockingCollection<ClipResult> _analysisQueue = new(new ConcurrentQueue<ClipResult>(), 500);
         private readonly BlockingCollection<AiJob> _aiQueue = new(new ConcurrentQueue<AiJob>(), 200);
@@ -31,16 +32,24 @@ namespace RandySDR
         public string AiStatus { get; private set; } = "";
         public int AiBacklog => _aiQueue.Count;
         public long LostAnalysisClips => Interlocked.Read(ref _lostAnalysisClips);
+        public bool ScreenerEnabled { get; set; }
 
         /// <summary>Raised from worker threads when clips or lockouts changed; marshal to the UI thread before touching controls.</summary>
         public event Action? Changed;
 
         public RobotController(RobotConfig config, RobotStore store, Func<double> stepHz)
+            : this(config, store, stepHz, null)
+        {
+        }
+
+        internal RobotController(RobotConfig config, RobotStore store, Func<double> stepHz,
+            Func<string, CancellationToken, Task<string>>? transcribe)
         {
             Config = config;
             Store = store;
             _stepHz = stepHz;
             Whisper = new WhisperTranscriber(() => Config);
+            _transcribe = transcribe ?? Whisper.TranscribeAsync;
             Ollama = new OllamaClient(() => Config);
             _recorder = new ClipRecorder(() => Config.ClipFolder, () => Config.MaxClipSeconds, () => Config.MinFreeGb,
                 () => Config.SpeechEarlySkip, () => Config.SpeechEarlySkipSeconds);
@@ -113,7 +122,12 @@ namespace RandySDR
         private void OnSignalLocked(double hz, double db)
         {
             if (!Config.RecordClips || _pipeline == null) return;
-            _recorder.Begin(new ClipInfo(Interlocked.Increment(ref _lockCounter), hz, _modeProvider(), db));
+            double? seconds = ScreenerEnabled && double.IsFinite(Config.ScreenerSeconds)
+                && Config.ScreenerSeconds is >= 4 and <= 30 ? Config.ScreenerSeconds : null;
+            if (ScreenerEnabled && seconds == null)
+                Logger.LogWarn("ScreenerBot", "Invalid screening duration; continuing without screening",
+                    $"Duration: {Config.ScreenerSeconds}; expected 4 to 30 seconds");
+            _recorder.Begin(new ClipInfo(Interlocked.Increment(ref _lockCounter), hz, _modeProvider(), db), seconds);
         }
 
         private void OnSignalReleased(double hz) => _recorder.End("released");
@@ -177,12 +191,15 @@ namespace RandySDR
         {
             Store.SetStar(clipId, star);
             if (star && Store.GetClip(clipId) is { } clip)
-            {
-                foreach (var l in Store.Lockouts("suggested", "active").Where(l => l.Key == clip.Key))
-                    Store.SetLockoutStatus(l.Id, "restored", DateTime.UtcNow);
-                RefreshLockoutCache();
-            }
+                RestoreChannelLockouts(clip.Key);
             Changed?.Invoke();
+        }
+
+        private void RestoreChannelLockouts(long key)
+        {
+            foreach (var l in Store.Lockouts("suggested", "active").Where(l => l.Key == key))
+                Store.SetLockoutStatus(l.Id, "restored", DateTime.UtcNow);
+            RefreshLockoutCache();
         }
 
         /// <summary>"This was wrong": junk becomes voice (and its channel is released from lockouts); anything else becomes noise.</summary>
@@ -190,14 +207,16 @@ namespace RandySDR
         {
             var c = Store.GetClip(clipId);
             if (c == null) return;
-            bool wasJunk = c.Class is "CARRIER" or "NOISE" or "TONE" or "SHORT";
+            bool wasJunk = c.EndReason.StartsWith("screened-", StringComparison.Ordinal)
+                || c.Class is "CARRIER" or "NOISE" or "TONE" or "SHORT";
             Store.SetWrong(clipId, true);
             Store.SetClass(clipId, wasJunk ? "VOICE" : "NOISE");
+            if (wasJunk && c.Status == "non-voice") Store.SetStatus(clipId, "needs-review");
             Store.Log("user-correction", c.Key, $"clip {clipId}: {c.Class} -> {(wasJunk ? "VOICE" : "NOISE")}");
-            if (wasJunk)
-                foreach (var l in Store.Lockouts("suggested", "active").Where(l => l.Key == c.Key))
-                    Store.SetLockoutStatus(l.Id, "restored", DateTime.UtcNow);
-            RefreshLockoutCache();
+            if (c.EndReason.StartsWith("screened-", StringComparison.Ordinal))
+                Store.Log("screener-correction", c.Key, $"clip {clipId}: {c.EndReason} marked wrong");
+            if (wasJunk) RestoreChannelLockouts(c.Key);
+            else RefreshLockoutCache();
             Changed?.Invoke();
         }
 
@@ -214,7 +233,17 @@ namespace RandySDR
         {
             var c = Store.GetClip(clipId);
             if (c == null || c.Deleted || !File.Exists(c.Path)) return;
-            _aiQueue.TryAdd(new AiJob(c.Id, c.Path, c.Hz, c.Mode, c.Key));
+            QueueAi(new AiJob(c.Id, c.Path, c.Hz, c.Mode, c.Key));
+            Changed?.Invoke();
+        }
+
+        private bool QueueAi(AiJob job)
+        {
+            Store.SetStatus(job.ClipId, "ai-queued");
+            if (_aiQueue.TryAdd(job)) return true;
+            Store.SetStatus(job.ClipId, "ai-queue-full");
+            Logger.LogWarn("RobotController", "AI queue full; clip not queued", $"Clip ID: {job.ClipId}");
+            return false;
         }
 
         // ---------- workers ----------
@@ -252,7 +281,9 @@ namespace RandySDR
                 $"Frequency: {r.Info.Hz / 1e6:F3} MHz, Mode: {r.Info.Mode}, Duration: {r.DurationSec:F2}s");
             
             ClipMetrics? m = r.Deleted ? null : ClipAnalyzer.AnalyzeFile(r.Path, options);
-            long id = Store.InsertClip(r, m, key);
+            bool screened = r.EndReason.StartsWith("screened-", StringComparison.Ordinal);
+            bool transcribe = m != null && Config.Transcribe && !screened;
+            long id = Store.InsertClip(r, m, key, transcribe);
 
             if (m != null)
             {
@@ -266,28 +297,39 @@ namespace RandySDR
 
             if (DateTime.UtcNow - _lastPurge > TimeSpan.FromHours(6))
             {
-                _lastPurge = DateTime.UtcNow;
-                var removed = Store.PurgeAudio(Config.VoiceRetentionDays, Config.CarrierRetentionDays, DateTime.UtcNow);
-                Logger.LogInfo("RobotController", $"Audio purge completed", $"{removed} clips removed");
+                try
+                {
+                    var removed = Store.PurgeAudio(Config.VoiceRetentionDays, Config.CarrierRetentionDays, DateTime.UtcNow);
+                    _lastPurge = DateTime.UtcNow;
+                    Logger.LogInfo("RobotController", $"Audio purge completed", $"{removed} clips removed");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
+                {
+                    _lastPurge = DateTime.UtcNow;
+                    Logger.LogError("RobotController", "Audio purge failed", ex.Message);
+                }
             }
 
             bool voiceish = m != null && m.Class is ClipClass.Voice or ClipClass.Uncertain && m.SpeechSec > 0.3;
-            if (voiceish && Config.Transcribe)
+            if (screened)
             {
-                if (!_aiQueue.TryAdd(new AiJob(id, r.Path, r.Info.Hz, r.Info.Mode, key)))
-                {
-                    Store.SetStatus(id, "ai-queue-full");
-                    Logger.LogWarn("RobotController", "AI queue full; clip marked as unclassified", $"Clip ID: {id}");
-                }
-                else
+                Logger.LogInfo("ScreenerBot", $"Filtered {r.Info.Hz / 1e6:F4} MHz", r.EndReason);
+            }
+            else if (transcribe)
+            {
+                if (QueueAi(new AiJob(id, r.Path, r.Info.Hz, r.Info.Mode, key)))
                 {
                     Logger.LogInfo("RobotController", $"Queued for transcription", $"Clip ID: {id}, Class: {m?.Class}");
                 }
             }
-            else if (m != null && m.Class != ClipClass.Voice)
+            else
             {
-                EvaluateLockout(key, r.Info.Hz);
-                Logger.LogDebug("LockoutPolicy", $"Lockout evaluation triggered", $"Key: {key}, Class: {m.Class}");
+                if (voiceish && !Config.Transcribe) Store.SetStatus(id, "transcription-disabled");
+                if (m != null && m.Class != ClipClass.Voice)
+                {
+                    EvaluateLockout(key, r.Info.Hz);
+                    Logger.LogDebug("LockoutPolicy", $"Lockout evaluation triggered", $"Key: {key}, Class: {m.Class}");
+                }
             }
             
             Changed?.Invoke();
@@ -325,6 +367,7 @@ namespace RandySDR
             var clipInfo = Store.GetClip(job.ClipId);
             if (clipInfo is null || clipInfo.Deleted || !File.Exists(job.Path))
             {
+                if (clipInfo is { Deleted: false }) Store.SetStatus(job.ClipId, "audio-unavailable");
                 Logger.LogWarn("RobotController", "AI job skipped; clip not available", 
                     $"Clip ID: {job.ClipId}, Exists: {File.Exists(job.Path)}");
                 return;
@@ -333,7 +376,7 @@ namespace RandySDR
             var fileName = Path.GetFileName(job.Path);
             Logger.LogInfo("WhisperTranscriber", $"Starting transcription", $"{fileName} ({job.Hz / 1e6:F3} MHz)");
             
-            string text = await Whisper.TranscribeAsync(job.Path, ct);
+            string text = await _transcribe(job.Path, ct);
             AiStatus = Whisper.Status;
             Store.SetTranscript(job.ClipId, text);
 
@@ -342,8 +385,13 @@ namespace RandySDR
                 Logger.LogWarn("WhisperTranscriber", "No speech detected in transcript", 
                     $"{fileName}: transcription returned empty string");
                 Store.SetStatus(job.ClipId, "no-speech");
+                if (!clipInfo.EndReason.StartsWith("screened-", StringComparison.Ordinal))
+                    EvaluateLockout(job.Key, job.Hz);
                 return;
             }
+
+            if (Store.GetClip(job.ClipId) is { Wrong: false, Deleted: false })
+                RestoreChannelLockouts(job.Key);
 
             Logger.LogInfo("WhisperTranscriber", $"Transcription complete", 
                 $"{fileName}: {text.Length} chars, {text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Count()} words");
@@ -415,6 +463,7 @@ namespace RandySDR
             {
                 Whisper.Dispose();
                 Ollama.Dispose();
+                Logger.Dispose();
                 Store.Dispose();
                 _analysisQueue.Dispose();
                 _aiQueue.Dispose();

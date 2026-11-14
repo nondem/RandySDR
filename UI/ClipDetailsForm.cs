@@ -26,7 +26,8 @@ namespace RandySDR
             {
                 AutoSize = true, Dock = DockStyle.Fill,
                 Text = $"{clip.StartUtc.ToLocalTime():g}  |  {clip.Hz / 1e6:0.0000} MHz  |  {clip.Mode}  |  {clip.Class}  |  {clip.DurationSec:0.0} s\n" +
-                       $"Status: {clip.Status}  |  Category: {(string.IsNullOrWhiteSpace(clip.Category) ? "not classified" : clip.Category)}",
+                       $"Status: {clip.Status}  |  Category: {(string.IsNullOrWhiteSpace(clip.Category) ? "not classified" : clip.Category)}" +
+                       (clip.EndReason.StartsWith("screened-", StringComparison.Ordinal) ? $"  |  ScreenerBot: {clip.EndReason[9..]} (partial recording)" : ""),
                 Margin = new Padding(0, 0, 0, 8)
             };
             var summary = new TextBox

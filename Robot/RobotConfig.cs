@@ -17,6 +17,7 @@ namespace RandySDR
         public double EarlySkipSeconds { get; set; } = 4;
         public bool SpeechEarlySkip { get; set; }
         public double SpeechEarlySkipSeconds { get; set; } = 10;
+        public double ScreenerSeconds { get; set; } = 4;
         public double TriageMinSpeechSeconds { get; set; } = 1.0;
         public double TriageMinSpeechRatio { get; set; } = 0.20;
         public double TriageMaxCarrierRatio { get; set; } = 0.05;

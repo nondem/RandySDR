@@ -9,6 +9,9 @@ namespace RandySDR
         private readonly int _sampleRate;
         private long _totalSamplesAdded = 0;
         private bool _hasPlayedTestTone = false;
+        private readonly object _audioLock = new();
+        private bool _muted;
+        private float _volume = 1f;
 
         public AudioPlayer(int sampleRate = 48000)
         {
@@ -58,33 +61,43 @@ namespace RandySDR
 
         public void AddSamples(float[] samples)
         {
-            if (_waveProvider == null || samples.Length == 0)
+            if (samples.Length == 0)
                 return;
+
+            float volume;
+            lock (_audioLock)
+            {
+                if (_waveProvider == null || _muted)
+                    return;
+                volume = _volume;
+            }
 
             // Convert float samples to 16-bit PCM with soft clipping
             byte[] pcmData = new byte[samples.Length * 2];
             for (int i = 0; i < samples.Length; i++)
             {
                 // Soft clipping using tanh for smoother distortion
-                // Samples are already volume-adjusted in demodulator
-                float sample = samples[i];
-                
-                // Use tanh for smooth soft clipping - prevents harsh digital distortion
-                float clipped = (float)Math.Tanh(sample);
-                
-                short pcmSample = (short)(clipped * short.MaxValue);
+                float clipped = (float)Math.Tanh(samples[i]);
+                short pcmSample = (short)Math.Clamp(clipped * volume * short.MaxValue, short.MinValue, short.MaxValue);
                 pcmData[i * 2] = (byte)(pcmSample & 0xFF);
                 pcmData[i * 2 + 1] = (byte)((pcmSample >> 8) & 0xFF);
             }
 
-            _waveProvider.AddSamples(pcmData, 0, pcmData.Length);
-            _totalSamplesAdded += samples.Length;
-            
-            // Debug buffer status periodically
-            if (_totalSamplesAdded % 10000 == 0)
+            long totalSamplesAdded;
+            double bufferedSeconds;
+            lock (_audioLock)
             {
-                System.Diagnostics.Debug.WriteLine($"Audio: {_totalSamplesAdded} samples added, buffered: {_waveProvider.BufferedDuration.TotalSeconds:F2}s");
+                if (_waveProvider == null || _muted)
+                    return;
+
+                _waveProvider.AddSamples(pcmData, 0, pcmData.Length);
+                _totalSamplesAdded += samples.Length;
+                totalSamplesAdded = _totalSamplesAdded;
+                bufferedSeconds = _waveProvider.BufferedDuration.TotalSeconds;
             }
+
+            if (totalSamplesAdded % 10000 == 0)
+                System.Diagnostics.Debug.WriteLine($"Audio: {totalSamplesAdded} samples added, buffered: {bufferedSeconds:F2}s");
         }
 
         public void GenerateTestTone(int frequency = 440)
@@ -108,6 +121,40 @@ namespace RandySDR
         }
 
         public bool IsPlaying => _waveOut?.PlaybackState == PlaybackState.Playing;
+
+        public bool Muted
+        {
+            get
+            {
+                lock (_audioLock)
+                    return _muted;
+            }
+            set
+            {
+                lock (_audioLock)
+                {
+                    if (_muted == value)
+                        return;
+
+                    _muted = value;
+                    _waveProvider?.ClearBuffer();
+                }
+            }
+        }
+
+        public float Volume
+        {
+            get
+            {
+                lock (_audioLock)
+                    return _volume;
+            }
+            set
+            {
+                lock (_audioLock)
+                    _volume = Math.Clamp(value, 0f, 2f);
+            }
+        }
         
         public int BufferedBytes => _waveProvider?.BufferedBytes ?? 0;
         

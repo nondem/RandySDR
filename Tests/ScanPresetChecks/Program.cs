@@ -10,6 +10,7 @@ internal static class Program
     private static void Main()
     {
         CheckStartupSettling();
+        CheckHoldBehavior();
         string directory = Path.Combine(Path.GetTempPath(), "RandySDR-scan-check-" + Guid.NewGuid());
         Directory.CreateDirectory(directory);
         try
@@ -21,6 +22,46 @@ internal static class Program
             var nfm = Field<RadioButton>(form, "rdoDemodNarrowFm");
             var am = Field<RadioButton>(form, "rdoDemodAm");
             var settings = Field<ScanSettings>(form, "_scanSettings");
+            var robot = Field<RobotController>(form, "_robot");
+            var clip = new ClipResult(new ClipInfo(1, 146_520_000, "NFM", 10), Path.Combine(directory, "test.wav"),
+                DateTime.UtcNow, 2, 2, "released", false);
+            long clipId = robot.Store.InsertClip(clip, ClipAnalyzer.Analyze(new float[ClipRecorder.SampleRate * 2], ClipRecorder.SampleRate), 1);
+            Call(form, "RefreshRobotLists");
+            var clipList = Field<ListView>(form, "_lstRobotClips");
+            var row = clipList.Items.Cast<ListViewItem>().Single(i => (long)i.Tag! == clipId);
+            Check(clipList.MultiSelect && clipList.CheckBoxes, "Clip list must support multiple selection and delete marks.");
+            Check(clipList.Columns.Cast<ColumnHeader>().Select(c => c.Text).SequenceEqual(
+                new[] { "Delete", "Time", "MHz", "Class", "Sec", "Status", "Category", "Urgency", "Transcript" })
+                && row.SubItems.Count == clipList.Columns.Count,
+                "Each clip value must have its matching visible column.");
+            Check(clipList.Columns[5].Text == "Status" && row.SubItems[3].Text == "CARRIER"
+                && row.SubItems[5].Text == "non-voice" && row.SubItems[8].Text == "",
+                "Clip list must show the non-voice result and status separately from the transcript.");
+            robot.Store.SetTranscript(clipId, "test transcript");
+            robot.Store.SetClassification(clipId, "amateur", 0, "test", 0.8);
+            Call(form, "RefreshRobotLists");
+            row = clipList.Items.Cast<ListViewItem>().Single(i => (long)i.Tag! == clipId);
+            Check(row.SubItems[5].Text == "classified" && row.SubItems[6].Text == "amateur"
+                && row.SubItems[8].Text == "test transcript" && clipList.Columns[8].Text == "Transcript",
+                "Clip status must remain visible alongside a transcript.");
+            _ = clipList.Handle;
+            row.Checked = true;
+            Check(row.Text == "✓", "Checking a clip must mark it for deletion.");
+            row.Checked = false;
+            long voiceId = robot.Store.InsertClip(clip, ClipAnalyzer.Analyze(new float[ClipRecorder.SampleRate * 2], ClipRecorder.SampleRate), 1);
+            robot.Store.SetClass(voiceId, "VOICE");
+            Call(form, "RefreshRobotLists");
+            static IEnumerable<Control> Descendants(Control parent) =>
+                parent.Controls.Cast<Control>().SelectMany(c => new[] { c }.Concat(Descendants(c)));
+            var deleteJunk = Descendants(form).OfType<Button>().Single(b => b.Text == "Delete junk");
+            typeof(Button).GetMethod("OnClick", PrivateInstance)!.Invoke(deleteJunk, new object[] { EventArgs.Empty });
+            Check(robot.Store.GetClip(clipId)!.Deleted && !robot.Store.GetClip(voiceId)!.Deleted,
+                "Delete junk must delete carrier clips but keep voice clips.");
+            long starredId = robot.Store.InsertClip(clip, ClipAnalyzer.Analyze(new float[ClipRecorder.SampleRate * 2], ClipRecorder.SampleRate), 1);
+            robot.Store.SetStar(starredId, true);
+            Call(form, "RefreshRobotLists");
+            typeof(Button).GetMethod("OnClick", PrivateInstance)!.Invoke(deleteJunk, new object[] { EventArgs.Empty });
+            Check(!robot.Store.GetClip(starredId)!.Deleted, "Delete junk must keep starred carrier clips.");
 
             CheckPreset(form, presets, settings, nfm, "Law Enforcement VHF", 136, 174, 1.25, 30_200);
             CheckWeatherExclusion(settings);
@@ -78,6 +119,76 @@ internal static class Program
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             Directory.Delete(directory, true);
+        }
+    }
+
+    private static void CheckHoldBehavior()
+    {
+        foreach (double mhz in new[] { 27d, 146d, 460d })
+        foreach (var method in new[] { ScanMethod.WidebandFft, ScanMethod.TuneEachChannel })
+        {
+            using var pipeline = new ReceiverPipeline(2_400_000);
+            var settings = new ScanSettings
+            {
+                StartMHz = mhz, StopMHz = mhz + 0.1, StepKHz = 25,
+                Method = method, AutoThreshold = false, ThresholdDb = 8,
+                Hold = HoldMode.UntilSignalDrops, HoldSeconds = 3
+            };
+            long now = 0;
+            var constructor = typeof(SignalScanner).GetConstructor(PrivateInstance, null,
+                new[] { typeof(ScanSettings), typeof(Action<uint>), typeof(Func<ReceiverPipeline>), typeof(Func<int>), typeof(Func<long>) }, null)!;
+            var scanner = (SignalScanner)constructor.Invoke(new object[]
+            {
+                settings, (Action<uint>)(_ => { }), (Func<ReceiverPipeline?>)(() => pipeline),
+                (Func<int>)(() => 2_400_000), (Func<long>)(() => now)
+            });
+            Check(scanner.Start(out string error), $"Scanner failed to start: {error}");
+            Call(scanner, "Lock", 0, 20d);
+            int releases = 0;
+            scanner.SignalReleased += _ => releases++;
+            var random = new Random(42);
+            byte[] signal = new byte[8192];
+            byte[] quiet = new byte[8192];
+            for (int i = 0; i < signal.Length / 2; i++)
+            {
+                double phase = 2 * Math.PI * 2000 * i / 2_400_000;
+                double ni = random.NextDouble() * 4 - 2;
+                double nq = random.NextDouble() * 4 - 2;
+                signal[2 * i] = (byte)Math.Round(127.5 + ni + 50 * Math.Cos(phase));
+                signal[2 * i + 1] = (byte)Math.Round(127.5 + nq + 50 * Math.Sin(phase));
+                quiet[2 * i] = (byte)Math.Round(127.5 + ni);
+                quiet[2 * i + 1] = (byte)Math.Round(127.5 + nq);
+            }
+            SetField(pipeline, "_lastIqData", signal);
+            foreach (long time in new long[] { 1000, 15000, 16000, 60000 })
+            {
+                now = time;
+                Call(scanner, "MeasureLocked", pipeline, now);
+                Check(scanner.State == ScanState.Locked && releases == 0,
+                    $"{mhz} MHz {method}: a continuous signal must not be released after {time} ms.");
+            }
+            SetField(pipeline, "_lastIqData", quiet);
+            Call(scanner, "MeasureLocked", pipeline, 62999L);
+            Check(scanner.State == ScanState.Locked, "Signal drop must respect the hold delay.");
+            Call(scanner, "MeasureLocked", pipeline, 63000L);
+            Check(scanner.State == ScanState.Scanning && releases == 1, "Signal drop must release after the hold delay.");
+
+            settings.Hold = HoldMode.FixedTime;
+            settings.HoldSeconds = 3;
+            Call(scanner, "Lock", 0, 20d);
+            SetField(scanner, "_lockStartMs", 70000L);
+            SetField(pipeline, "_lastIqData", signal);
+            Call(scanner, "MeasureLocked", pipeline, 72999L);
+            Check(scanner.State == ScanState.Locked, "Fixed-time hold must wait for its configured duration.");
+            Call(scanner, "MeasureLocked", pipeline, 73000L);
+            Check(scanner.State == ScanState.Scanning && releases == 2, "Fixed-time hold must release a continuous signal.");
+
+            settings.Hold = HoldMode.UntilResumed;
+            Call(scanner, "Lock", 0, 20d);
+            Call(scanner, "MeasureLocked", pipeline, 200000L);
+            Check(scanner.State == ScanState.Locked, "Manual hold must not release automatically.");
+            scanner.Resume();
+            Check(scanner.State == ScanState.Scanning && releases == 3, "Resume must release manual hold.");
         }
     }
 
