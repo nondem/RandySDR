@@ -110,8 +110,6 @@ namespace RandySDR
             card.Controls.Clear();
             foreach (var child in children)
             {
-                if (card == _cardRange || card == _cardDetect || card == _cardBehave || card == _cardControl)
-                    child.Enabled = true;
                 content.Controls.Add(child);
             }
             card.BackColorChanged += (_, _) => content.BackColor = card.BackColor;

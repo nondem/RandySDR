@@ -60,7 +60,31 @@ namespace RandySDR
                 settings.ShowDialog(this);
             };
 
-            _lstRobotClips = NewRobotList(true, "Delete", 35, "Time", 70, "MHz", 80, "Class", 70, "Sec", 40, "Status", 110, "Category", 90, "Urgency", 60, "Transcript", 400);
+            _lstRobotClips = NewRobotList(true, "Delete", 35, "Time", 70, "MHz", 80, "Class", 70, "Sec", 40, "Status", 110, "Category", 90, "Urgency", 60, "Transcript", 200);
+            _lstRobotClips.BackColor = Color.FromArgb(25, 25, 25);
+            _lstRobotClips.ForeColor = Color.Yellow;
+            _lstRobotClips.Font = new Font("Consolas", 9f);
+            
+            // Auto-size columns after form loads and remove empty far-right column
+            _lstRobotClips.SizeChanged += (s, e) =>
+            {
+                // Auto-size all columns to fit their content
+                for (int i = 0; i < _lstRobotClips.Columns.Count; i++)
+                {
+                    _lstRobotClips.Columns[i].AutoResize(ColumnHeaderAutoResizeStyle.ColumnContent);
+                }
+                
+                // Check if the last column (Transcript) is empty and hide it if so
+                var lastColumn = _lstRobotClips.Columns[_lstRobotClips.Columns.Count - 1];
+                bool hasAnyTranscripts = _lstRobotClips.Items.Cast<ListViewItem>().Any(item => 
+                    item.SubItems.Count > _lstRobotClips.Columns.Count - 1 && 
+                    !string.IsNullOrWhiteSpace(item.SubItems[_lstRobotClips.Columns.Count - 1].Text));
+                
+                if (!hasAnyTranscripts)
+                {
+                    lastColumn.Width = 0;
+                }
+            };
             _lstRobotLockouts = NewRobotList(false, "MHz", 80, "Status", 80, "Reason", 400);
             var btnPlay = NewButton("Play");
             var btnStar = NewButton("Star");
@@ -269,12 +293,44 @@ namespace RandySDR
                 _lstRobotClips.Tag = (col, newOrder); // Store current sort column and order
             };
 
+            // Enhanced keyboard shortcuts for selection and deletion
             _lstRobotClips.KeyDown += (_, e) =>
             {
-                if (e.KeyCode == Keys.Delete) { DeleteIds(SelClips(), "selected clips"); e.Handled = true; }
+                if (e.KeyCode == Keys.Delete)
+                {
+                    var selectedIds = SelClips();
+                    if (selectedIds.Count > 0)
+                    {
+                        DeleteIds(selectedIds, "selected clips");
+                        e.Handled = true;
+                    }
+                }
                 else if (e.Control && e.KeyCode == Keys.A)
                 {
                     foreach (ListViewItem i in _lstRobotClips.Items) i.Selected = true;
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Space)
+                {
+                    // Toggle checked state for all selected items
+                    foreach (ListViewItem item in _lstRobotClips.SelectedItems)
+                    {
+                        item.Checked = !item.Checked;
+                    }
+                    e.Handled = true;
+                }
+                else if (e.Control && e.KeyCode == Keys.D)
+                {
+                    // Select all clips with same category as first selection
+                    if (_lstRobotClips.SelectedItems.Count > 0)
+                    {
+                        var firstCategory = _lstRobotClips.SelectedItems[0].SubItems[6].Text;
+                        foreach (ListViewItem item in _lstRobotClips.Items)
+                        {
+                            if (item.SubItems[6].Text == firstCategory)
+                                item.Selected = true;
+                        }
+                    }
                     e.Handled = true;
                 }
             };
@@ -298,7 +354,48 @@ namespace RandySDR
                 }
             };
 
-            // Handle Shift+Click for range selection
+            // Context menu for right-click actions
+            var contextMenu = new ContextMenuStrip();
+            contextMenu.Items.Add("Select all", null, (s, e) =>
+            {
+                foreach (ListViewItem item in _lstRobotClips.Items) item.Selected = true;
+            });
+            contextMenu.Items.Add("Select none", null, (s, e) =>
+            {
+                foreach (ListViewItem item in _lstRobotClips.Items) item.Selected = false;
+            });
+            contextMenu.Items.Add("Select same category", null, (s, e) =>
+            {
+                if (_lstRobotClips.SelectedItems.Count > 0)
+                {
+                    var firstCategory = _lstRobotClips.SelectedItems[0].SubItems[6].Text;
+                    foreach (ListViewItem item in _lstRobotClips.Items)
+                    {
+                        if (item.SubItems[6].Text == firstCategory)
+                            item.Selected = true;
+                    }
+                }
+            });
+            var separator1 = new ToolStripSeparator();
+            contextMenu.Items.Add(separator1);
+            contextMenu.Items.Add("Toggle checked (Space)", null, (s, e) =>
+            {
+                foreach (ListViewItem item in _lstRobotClips.SelectedItems)
+                {
+                    item.Checked = !item.Checked;
+                }
+            });
+            var separator2 = new ToolStripSeparator();
+            contextMenu.Items.Add(separator2);
+            var deleteItem = new ToolStripMenuItem("Delete selected", null, (s, e) =>
+            {
+                DeleteIds(SelClips(), "selected clips");
+            });
+            deleteItem.ShortcutKeys = Keys.Delete;
+            contextMenu.Items.Add(deleteItem);
+            _lstRobotClips.ContextMenuStrip = contextMenu;
+
+            // Enhanced Shift+Click for range selection with visual feedback
             _lstRobotClips.MouseDown += (_, e) =>
             {
                 if (e.Button == MouseButtons.Left && _lstRobotClips.GetItemAt(e.X, e.Y) is ListViewItem clickedItem)
@@ -311,10 +408,19 @@ namespace RandySDR
                         int start = Math.Min(_lastClickedIndex.Value, clickedIndex);
                         int end = Math.Max(_lastClickedIndex.Value, clickedIndex);
                         
+                        // Preserve the first selected item to re-select after range selection
+                        var firstSelected = _lstRobotClips.SelectedItems.Count > 0 ? _lstRobotClips.SelectedItems[0] : null;
+                        
                         // Select all items in range
                         for (int i = start; i <= end; i++)
                         {
                             _lstRobotClips.Items[i].Selected = true;
+                        }
+                        
+                        // Re-select the first item if it was selected before
+                        if (firstSelected != null)
+                        {
+                            firstSelected.Selected = true;
                         }
                     }
                     
@@ -328,6 +434,41 @@ namespace RandySDR
                 if (e.Button == MouseButtons.Left && _lstRobotClips.GetItemAt(e.X, e.Y) == null)
                 {
                     _lastClickedIndex = null;
+                }
+            };
+
+            // Enhanced selection highlighting with custom colors
+            _lstRobotClips.OwnerDraw = true;
+            _lstRobotClips.DrawColumnHeader += (s, e) =>
+            {
+                if (_lstRobotClips.Focused)
+                {
+                    using var brush = new SolidBrush(Color.FromArgb(50, 100, 180));
+                    e.Graphics.FillRectangle(brush, e.Bounds);
+                    ControlPaint.DrawFocusRectangle(e.Graphics, e.Bounds);
+                }
+                // Draw header text in yellow
+                using var headerBrush = new SolidBrush(Color.Yellow);
+                e.Graphics.DrawString(e.Header.Text, _lstRobotClips.Font, headerBrush, e.Bounds, StringFormat.GenericDefault);
+            };
+            _lstRobotClips.DrawItem += (s, e) =>
+            {
+                if (e.Item.Selected && _lstRobotClips.Focused)
+                {
+                    // Draw selection highlight with better color
+                    using var brush = new SolidBrush(Color.FromArgb(30, 120, 200));
+                    e.Graphics.FillRectangle(brush, e.Bounds);
+                }
+                e.DrawBackground();
+                ControlPaint.DrawFocusRectangle(e.Graphics, e.Bounds);
+                
+                // Draw item text in yellow (only for visible columns)
+                using var textBrush = new SolidBrush(Color.Yellow);
+                int visibleColumns = _lstRobotClips.Columns.Count;
+                for (int i = 0; i < Math.Min(e.Item.SubItems.Count, visibleColumns); i++)
+                {
+                    var subItem = e.Item.SubItems[i];
+                    e.Graphics.DrawString(subItem.Text, _lstRobotClips.Font, textBrush, subItem.Bounds, StringFormat.GenericDefault);
                 }
             };
             btnOpen.Click += (_, _) =>

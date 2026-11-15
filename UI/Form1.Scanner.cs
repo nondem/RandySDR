@@ -1,4 +1,4 @@
-﻿// Form1 - signal scanner panel: UI is built in code (no designer entries) and drives SignalScanner.
+// Form1 - signal scanner panel: UI is built in code (no designer entries) and drives SignalScanner.
 namespace RandySDR
 {
     public partial class Form1
@@ -12,7 +12,7 @@ namespace RandySDR
         private string? _scanRangeError;
         private decimal _scanOriginalMHz;
 
-        private sealed record LogEntry(DateTime Time, double MHz, double Db, string Mode);
+        private sealed record LogEntry(DateTime Time, double MHz, double Db, string Mode, string Channel);
         private readonly List<LogEntry> _scanLog = new();
 
         private ComboBox _cmbPreset = null!, _cmbMethod = null!, _cmbHold = null!;
@@ -37,7 +37,7 @@ namespace RandySDR
             ("NOAA weather 162.400-162.550 / 25 kHz", 162.4, 162.55, 25, DemodulationMode.NarrowFm),
             ("Marine VHF 156-162.4 / 25 kHz", 156, 162.4, 25, DemodulationMode.NarrowFm),
             ("2 m ham 144-148 / 5 kHz", 144, 148, 5, DemodulationMode.NarrowFm),
-            ("CB US standard 40 channels (AM)", 26.965, 27.405, 10, DemodulationMode.Am),
+            ("CB extended 225 channels", 26.065, 28.305, 10, DemodulationMode.Am),
             ("70 cm ham 430-450 / 5 kHz", 430, 450, 5, DemodulationMode.NarrowFm),
             ("FRS/GMRS 462.550-467.725 / 12.5 kHz", 462.55, 467.725, 12.5, DemodulationMode.NarrowFm),
             (ScanSettings.LawEnforcementVhfPresetName, 136, 174, 1.25, DemodulationMode.NarrowFm),
@@ -52,9 +52,9 @@ namespace RandySDR
             _numStart = NewNumeric(3, 0.5m, 1766m, 0.1m);
             _numStop = NewNumeric(3, 0.5m, 1766m, 0.1m);
             _numStep = NewNumeric(2, 1m, 5000m, 5m);
-            new ToolTip().SetToolTip(_numStep, "CB uses its standard channel list, including gaps; other presets use a regular frequency grid.");
+            new ToolTip().SetToolTip(_numStep, "CB uses five labeled 45-channel banks including Alpha channels; other presets use a regular frequency grid.");
             _cmbMethod = NewCombo(new[] { "Wideband FFT (fast)", "Tune each channel (slow)" });
-            _cmbHold = NewCombo(new[] { "Stay until signal drops", "Stay until I press Resume", "Stay for fixed time" });
+            _cmbHold = NewCombo(new[] { "Stay until signal drops", "Stay until I press Resume", "Stay for fixed time" }, 200);
             _lblThreshold = new Label { AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
             _chkAutoThreshold = new CheckBox { Text = "Auto-detect threshold", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
             _numAutoTrim = NewNumeric(0, -10m, 15m, 1m);
@@ -62,10 +62,28 @@ namespace RandySDR
             thresholdTip.SetToolTip(_chkAutoThreshold, "Learns the threshold from the measured noise while scanning. Uncheck to set it manually with the slider.");
             thresholdTip.SetToolTip(_numAutoTrim, "Nudges the automatic threshold. Negative = more sensitive, positive = fewer false detections.");
             _trackThreshold = new TrackBar { Dock = DockStyle.Fill, AutoSize = false, Height = 32, Minimum = 3, Maximum = 40, TickFrequency = 3, Value = 8, Margin = new Padding(0, 0, 0, 0) };
-            _numHold = NewNumeric(1, 0.5m, 120m, 0.5m);
+            _numHold = new NumericUpDown 
+            { 
+                DecimalPlaces = 1, 
+                Minimum = 0.5m, 
+                Maximum = 120m, 
+                Increment = 0.5m, 
+                Margin = new Padding(0, 0, 20, 0),
+                Width = 80,
+                Dock = DockStyle.None
+            };
             var holdTip = new ToolTip();
             holdTip.SetToolTip(_numHold, "In 'Stay until signal drops' mode, wait this long after the signal drops before resuming. In fixed-time mode, stay for this long regardless of signal.");
-            _numSettle = NewNumeric(0, 40m, 1000m, 10m);
+            _numSettle = new NumericUpDown 
+            { 
+                DecimalPlaces = 0, 
+                Minimum = 40m, 
+                Maximum = 1000m, 
+                Increment = 10m, 
+                Margin = new Padding(0, 0, 0, 0),
+                Width = 120,
+                Dock = DockStyle.None
+            };
             _chkAutoMode = new CheckBox { Text = "Auto-select mode by band", AutoSize = true, Margin = new Padding(0, 2, 16, 2) };
             _chkLog = new CheckBox { Text = "Log detections", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
             var checks = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = true, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 0) };
@@ -88,6 +106,7 @@ namespace RandySDR
             _lstLog.Columns.Add("MHz", 130);
             _lstLog.Columns.Add("dB", 90);
             _lstLog.Columns.Add("Mode", 200);
+            _lstLog.Columns.Add("Channel", 100);
             var btnClearLog = NewButton("Clear log");
             var btnSaveLog = NewButton("Save CSV...");
 
@@ -104,9 +123,48 @@ namespace RandySDR
                 FieldRow((_lblThreshold, _trackThreshold)),
                 OptionRow(_chkLinkSquelch, "Squelch offset (dB)", _numSquelchOffset),
                 _lblSquelchLinkStatus));
-            _cardBehave = AddScanCard("Behaviour", Stack(
-                FieldRow(("When a signal is found", _cmbHold), ("Hold / drop time (s)", _numHold), ("Settle time (ms)", _numSettle)),
-                checks));
+            // Custom behaviour row with absolute positioning for settle time
+            var behaveRow = new TableLayoutPanel 
+            { 
+                AutoSize = true, 
+                ColumnCount = 3, 
+                RowCount = 2, 
+                Margin = new Padding(0, 0, 0, 4)
+            };
+            behaveRow.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            behaveRow.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            
+            // Column 1: Hold mode dropdown
+            var holdLabel = new Label { Text = "When a signal is found", AutoSize = true, Margin = new Padding(0, 2, 5, 2) };
+            behaveRow.Controls.Add(holdLabel, 0, 0);
+            _cmbHold.Dock = DockStyle.Fill;
+            behaveRow.Controls.Add(_cmbHold, 0, 1);
+            
+            // Column 2: Hold time numeric (with right margin)
+            var holdTimeLabel = new Label { Text = "Hold / drop time (s)", AutoSize = true, Margin = new Padding(0, 2, 5, 2) };
+            behaveRow.Controls.Add(holdTimeLabel, 1, 0);
+            _numHold.Dock = DockStyle.None;
+            _numHold.Margin = new Padding(0, 0, 20, 0);
+            behaveRow.Controls.Add(_numHold, 1, 1);
+            
+            // Column 3: Settle time numeric (positioned absolutely)
+            var settleTimeLabel = new Label 
+            { 
+                Text = "Settle time (ms)", 
+                AutoSize = true, 
+                Margin = new Padding(0, 2, -60, 2), 
+                Location = new Point(-60, 0),
+                ForeColor = Color.Yellow,
+                Font = new Font("Consolas", 9f)
+            };
+            behaveRow.Controls.Add(settleTimeLabel, 2, 0);
+            _numSettle.Dock = DockStyle.None;
+            _numSettle.Location = new Point(-60, 0);
+            _numSettle.ForeColor = Color.Yellow;
+            _numSettle.Font = new Font("Consolas", 9f);
+            behaveRow.Controls.Add(_numSettle, 2, 1);
+            
+            _cardBehave = AddScanCard("Behaviour", Stack(behaveRow, checks));
             _cardControl = AddScanCard("Scan Control", Stack(
                 ButtonRow(_btnScanToggle, _btnRobotScan),
                 ButtonRow(_btnResume, _btnLockout), _lblScanStatus));
@@ -196,15 +254,29 @@ namespace RandySDR
             return t;
         }
 
-        private static ComboBox NewCombo(string[] items)
+        private static ComboBox NewCombo(string[] items, int width = 180)
         {
-            var c = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(0, 0, 10, 0) };
+            var c = new ComboBox 
+            { 
+                DropDownStyle = ComboBoxStyle.DropDownList, 
+                Margin = new Padding(0, 0, 5, 0),
+                Width = width
+            };
             c.Items.AddRange(items);
             return c;
         }
 
-        private static NumericUpDown NewNumeric(int decimals, decimal min, decimal max, decimal inc) =>
-            new() { Dock = DockStyle.Fill, DecimalPlaces = decimals, Minimum = min, Maximum = max, Increment = inc, Margin = new Padding(0, 0, 10, 0) };
+        private static NumericUpDown NewNumeric(int decimals, decimal min, decimal max, decimal inc, int width = 120) =>
+            new() 
+            { 
+                DecimalPlaces = decimals, 
+                Minimum = min, 
+                Maximum = max, 
+                Increment = inc, 
+                Margin = new Padding(0, 0, 5, 0),
+                Width = width,
+                Dock = DockStyle.None
+            };
 
         private static Button NewButton(string text) =>
             new() { Text = text, Dock = DockStyle.Fill, MinimumSize = new Size(0, 36), Margin = new Padding(0, 2, 8, 2) };
@@ -212,21 +284,44 @@ namespace RandySDR
         /// <summary>One row of equally wide columns, each a caption above its control.</summary>
         private static TableLayoutPanel FieldRow(params (object? Caption, Control Control)[] fields)
         {
-            var t = new TableLayoutPanel { AutoSize = true, ColumnCount = fields.Length, RowCount = 2, Margin = new Padding(0, 0, 0, 4) };
+            var t = new TableLayoutPanel 
+            { 
+                AutoSize = true, 
+                ColumnCount = fields.Length, 
+                RowCount = 2, 
+                Margin = new Padding(0, 0, 0, 4),
+                Padding = new Padding(0, 0, 0, 0)
+            };
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            
             for (int i = 0; i < fields.Length; i++)
             {
                 t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / fields.Length));
+            }
+            
+            for (int i = 0; i < fields.Length; i++)
+            {
                 var caption = fields[i].Caption switch
                 {
                     Label l => l,
-                    string s => new Label { Text = s, AutoSize = true, Margin = new Padding(0, 2, 0, 2) },
+                    string s when s.Contains("Hold / drop time") => new Label { Text = s, AutoSize = true, Margin = new Padding(0, 2, 5, 2) },
+                    string s when s.Contains("Settle time") => new Label { Text = s, AutoSize = true, Margin = new Padding(0, 2, 3, 2) },
+                    string s => new Label { Text = s, AutoSize = true, Margin = new Padding(0, 2, 3, 2) },
                     _ => null
                 };
                 if (caption != null) t.Controls.Add(caption, i, 0);
-                fields[i].Control.Dock = DockStyle.Fill;
-                t.Controls.Add(fields[i].Control, i, 1);
+                
+                var ctrl = fields[i].Control;
+                if (ctrl is NumericUpDown numCtrl && numCtrl.Width > 0)
+                {
+                    ctrl.Dock = DockStyle.None;
+                }
+                else
+                {
+                    ctrl.Dock = DockStyle.Fill;
+                }
+                t.Controls.Add(ctrl, i, 1);
             }
             return t;
         }
@@ -282,6 +377,12 @@ namespace RandySDR
         {
             _loadingScanUi = true;
             var s = _scanSettings;
+            if (s.UseCbChannels && s.StartMHz == 26.965 && s.StopMHz == 27.405 && s.StepKHz == 10)
+            {
+                s.StartMHz = CbChannels.StartHz / 1e6;
+                s.StopMHz = CbChannels.StopHz / 1e6;
+                s.PresetName = ScanPresets[CbPresetIndex].Name;
+            }
             _numStart.Value = Math.Clamp((decimal)s.StartMHz, _numStart.Minimum, _numStart.Maximum);
             _numStop.Value = Math.Clamp((decimal)s.StopMHz, _numStop.Minimum, _numStop.Maximum);
             _numStep.Value = Math.Clamp((decimal)s.StepKHz, _numStep.Minimum, _numStep.Maximum);
@@ -401,6 +502,11 @@ namespace RandySDR
                 if (i == CbPresetIndex) rdoDemodAm.Checked = true;
                 else rdoDemodNarrowFm.Checked = true;
             }
+            else if (i == 8 || i == 10) // FRS/GMRS or LE UHF
+            {
+                _chkAutoMode.Checked = true;
+                rdoDemodNarrowFm.Checked = true;
+            }
             _loadingScanUi = false;
             ReadScanSettingsFromUi();
             if (_scanRangeError == null && _scanSettings.AutoSelectMode)
@@ -496,14 +602,15 @@ namespace RandySDR
             RetuneRadio((uint)Math.Round(hz));
             RefreshScanMute();
 
-            lblStatus.Text = $"Scanner locked: {mhz:0.0000} MHz (+{db:F0} dB)";
+            string channel = _scanSettings.UseCbChannels && CbChannels.TryGetChannel(hz, out var cb) ? cb.Label : "";
+            lblStatus.Text = $"Scanner locked: {(channel.Length > 0 ? $"CB {channel} " : "")}{mhz:0.0000} MHz (+{db:F0} dB)";
             lblStatus.ForeColor = Color.Green;
 
             if (_scanSettings.LogDetections)
             {
-                var entry = new LogEntry(DateTime.Now, (double)mhz, db, GetDemodulationMode().ToString());
+                var entry = new LogEntry(DateTime.Now, (double)mhz, db, GetDemodulationMode().ToString(), channel);
                 _scanLog.Add(entry);
-                var item = new ListViewItem(new[] { entry.Time.ToString("HH:mm:ss"), entry.MHz.ToString("0.0000"), $"+{entry.Db:F0}", entry.Mode });
+                var item = new ListViewItem(new[] { entry.Time.ToString("HH:mm:ss"), entry.MHz.ToString("0.0000"), $"+{entry.Db:F0}", entry.Mode, entry.Channel });
                 _lstLog.Items.Insert(0, item);
                 UpdateCardStates();
             }
@@ -554,11 +661,18 @@ namespace RandySDR
                 c.Enabled = true;
             UpdateCardStates();
 
+            // Visual indicator: red border when locked
+            bool isLocked = state == ScanState.Locked;
+            _cardControl.CustomBorderColor = isLocked ? Color.Red : null;
+            _cardRange.CustomBorderColor = isLocked ? Color.Red : null;
+            _cardDetect.CustomBorderColor = isLocked ? Color.Red : null;
+            _cardBehave.CustomBorderColor = isLocked ? Color.Red : null;
+
             if (sc == null || !running)
             {
                 _lblScanStatus.Text = "Idle - choose normal or robot scan";
                 _lblScanStatus.ForeColor = Color.FromArgb(150, 156, 170);
-                if (sc != null) _scanGraph.SetData(sc.Strength, sc.ChannelHz, -1, false);
+                if (sc != null) _scanGraph.SetData(sc.Strength, sc.ChannelHz, -1, false, _scanSettings.UseCbChannels);
                 return;
             }
 
@@ -567,11 +681,11 @@ namespace RandySDR
                 for (int i = 0; i < sc.ChannelHz.Count; i++)
                     if (sc.ChannelHz[i] == sc.LockedHz) { marker = i; break; }
 
-            _scanGraph.SetData(sc.Strength, sc.ChannelHz, marker, true);
+            _scanGraph.SetData(sc.Strength, sc.ChannelHz, marker, true, _scanSettings.UseCbChannels);
             _lblScanStatus.Text = sc.IsStartupSettling
                 ? "Settling radio before scanning..."
                 : state == ScanState.Locked
-                ? $"LOCKED {sc.LockedHz / 1e6:0.0000} MHz  signal +{sc.LockedStrengthDb:F1} dB  (floor {sc.NoiseFloorDb:F1} dBFS)"
+                ? $"LOCKED {(_scanSettings.UseCbChannels && CbChannels.TryGetChannel(sc.LockedHz, out var cb) ? $"CB {cb.Label} " : "")}{sc.LockedHz / 1e6:0.0000} MHz  signal +{sc.LockedStrengthDb:F1} dB  (floor {sc.NoiseFloorDb:F1} dBFS)"
                 : $"Scanning {sc.CurrentHz / 1e6:F3} MHz   floor {sc.NoiseFloorDb:F1} dBFS   sweeps: {sc.SweepCount}";
             if (_scanRangeError != null) _lblScanStatus.Text += $"  |  {_scanRangeError}";
             _lblScanStatus.ForeColor = _scanRangeError != null ? Color.Orange
@@ -620,7 +734,8 @@ namespace RandySDR
             Set(_cardLock, usable || hasLock, hasLock ? $"{_lstLockouts.Items.Count} SKIPPED" : null);
 
             _cardRange.Enabled = true;
-            // Enable controls for all device-dependent cards when device is open
+            // Before wrapping, direct children include controls with their own enabled state.
+            if (!_dashboardReady) return;
             var deviceCards = new[] { groupBox2, groupBox3, groupBox4, groupBoxAudio, _cardRange, _cardDetect, _cardBehave, _cardControl };
             foreach (var c in deviceCards)
                 if (c != null)
@@ -664,8 +779,8 @@ namespace RandySDR
             }
             using var dlg = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv", FileName = $"scan-log-{DateTime.Now:yyyyMMdd-HHmmss}.csv" };
             if (dlg.ShowDialog() != DialogResult.OK) return;
-            var lines = new List<string> { "Time,MHz,dB above floor,Mode" };
-            lines.AddRange(_scanLog.Select(e => $"{e.Time:yyyy-MM-dd HH:mm:ss},{e.MHz:0.0000},{e.Db:F1},{e.Mode}"));
+            var lines = new List<string> { "Time,MHz,dB above floor,Mode,Channel" };
+            lines.AddRange(_scanLog.Select(e => $"{e.Time:yyyy-MM-dd HH:mm:ss},{e.MHz:0.0000},{e.Db:F1},{e.Mode},{e.Channel}"));
             File.WriteAllLines(dlg.FileName, lines);
         }
 
@@ -673,12 +788,14 @@ namespace RandySDR
         {
             var preset = ScanPresets.FirstOrDefault(p => p.Name == _scanSettings.PresetName
                 && p.Start == _scanSettings.StartMHz && p.Stop == _scanSettings.StopMHz && p.Step == _scanSettings.StepKHz);
-            DemodulationMode? mode = preset.Mode ?? mhz switch
+            DemodulationMode? mode = _scanSettings.UseCbChannels && CbChannels.TryGetChannel(mhz * 1e6, out var cb)
+                ? cb.Mode : preset.Mode ?? mhz switch
             {
                 >= 87.5 and <= 108 => DemodulationMode.WideFm,
                 > 108 and <= 137 => DemodulationMode.Am,
                 >= 25 and <= 30 => DemodulationMode.Am,
                 >= 137 and <= 174 => DemodulationMode.NarrowFm,
+                >= 462 and <= 468 => DemodulationMode.NarrowFm,
                 >= 430 and <= 470 => DemodulationMode.NarrowFm,
                 _ => null
             };
@@ -687,6 +804,8 @@ namespace RandySDR
                 DemodulationMode.WideFm => rdoDemodWideFm,
                 DemodulationMode.NarrowFm => rdoDemodNarrowFm,
                 DemodulationMode.Am => rdoDemodAm,
+                DemodulationMode.Usb => rdoDemodUsb,
+                DemodulationMode.Lsb => rdoDemodLsb,
                 _ => null
             };
             if (target != null) target.Checked = true;

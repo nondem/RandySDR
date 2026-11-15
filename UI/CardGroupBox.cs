@@ -23,6 +23,14 @@ namespace RandySDR
         private string? _badgeText;
         private Color? _badgeColor;
         private bool _workspaceFocused;
+        private Color? _customBorderColor;
+
+        [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public Color? CustomBorderColor
+        {
+            get => _customBorderColor;
+            set { if (_customBorderColor != value) { _customBorderColor = value; Invalidate(); } }
+        }
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public bool WorkspaceFocused
@@ -40,7 +48,11 @@ namespace RandySDR
         }
 
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override Color ForeColor { get => _active ? ActiveTextColor : InactiveTextColor; set { } }
+        public override Color ForeColor
+        {
+            get => _active ? ActiveTextColor : InactiveTextColor;
+            set { }
+        }
 
         /// <summary>True when the controls in this card are usable in the current situation.</summary>
         [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -166,7 +178,11 @@ namespace RandySDR
                 using var glow = new Pen(Color.FromArgb(60, AccentColor), 4f);
                 g.DrawPath(glow, path);
             }
-            using (var pen = new Pen(_workspaceFocused ? Color.White : _active ? AccentColor : Color.FromArgb(38, 42, 54), _workspaceFocused ? 2f : _active ? 1.5f : 1f)) g.DrawPath(pen, path);
+            
+            // Use custom border color if set (e.g., red for locked state), otherwise use normal logic
+            Color borderColor = _customBorderColor ?? (_workspaceFocused ? Color.White : _active ? AccentColor : Color.FromArgb(38, 42, 54));
+            float borderWidth = _workspaceFocused ? 2f : _active ? 1.5f : 1f;
+            using (var pen = new Pen(borderColor, borderWidth)) g.DrawPath(pen, path);
             if (_dropBefore.HasValue)
             {
                 using var dropPen = new Pen(Color.Gold, 4f);

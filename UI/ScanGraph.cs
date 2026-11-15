@@ -21,6 +21,7 @@ namespace RandySDR
         private double _axisMin = 0, _axisMax = 30;
         private long _lastRangeExpansion;
         private int _hoverColumn = -1;
+        private bool _showCbLabels;
 
         public ScanGraph()
         {
@@ -46,7 +47,7 @@ namespace RandySDR
             }
         }
 
-        public void SetData(double[] strength, IReadOnlyList<double> channelHz, int markerIndex, bool running)
+        public void SetData(double[] strength, IReadOnlyList<double> channelHz, int markerIndex, bool running, bool showCbLabels = false)
         {
             ArgumentNullException.ThrowIfNull(strength);
             ArgumentNullException.ThrowIfNull(channelHz);
@@ -58,6 +59,8 @@ namespace RandySDR
             _channelHz = channelHz;
             _markerIndex = markerIndex;
             _running = running;
+            if (_showCbLabels != showCbLabels) ClearTip();
+            _showCbLabels = showCbLabels;
             UpdateRange(newPlan);
             if (newPlan) ClearTip();
             Invalidate();
@@ -273,8 +276,10 @@ namespace RandySDR
             int best = BestInColumn(column, columns);
             var (first, end) = ColumnRange(column, columns);
             string range = end - first > 1 ? $"Strongest of {end - first} channels in this column\n" : "";
+            string label = best >= 0 && _showCbLabels && CbChannels.TryGetChannel(_channelHz[best], out var cb)
+                ? $"CB {cb.Label}  " : "";
             string message = best < 0 ? (first == end ? "No channel in this column" : "Not yet measured") :
-                $"{range}{FormatMHz(_channelHz[best])} MHz\n{_strength[best]:+0.0;-0.0;0.0} dB above noise";
+                $"{range}{label}{FormatMHz(_channelHz[best])} MHz\n{_strength[best]:+0.0;-0.0;0.0} dB above noise";
             _tip.SetToolTip(this, message);
         }
 

@@ -120,9 +120,9 @@ namespace RandySDR
                 return false;
             }
             
-            if (_s.UseCbChannels && (_s.StartMHz != 26.965 || _s.StopMHz != 27.405 || _s.StepKHz != 10))
+            if (_s.UseCbChannels && (_s.StartMHz != CbChannels.StartHz / 1e6 || _s.StopMHz != CbChannels.StopHz / 1e6 || _s.StepKHz != 10))
             {
-                error = "The CB channel plan requires the standard range and 10 kHz nominal step. Select the CB preset again.";
+                error = "The CB channel plan requires 26.065–28.305 MHz and a 10 kHz step. Select the CB preset again.";
                 return false;
             }
 

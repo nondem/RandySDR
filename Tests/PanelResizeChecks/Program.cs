@@ -11,6 +11,13 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Contains("--gain-only"))
+        {
+            CheckGainControls();
+            CheckDeviceOpening();
+            Console.WriteLine("Gain and input control checks passed.");
+            return;
+        }
         if (args.Contains("--scan-mode-only"))
         {
             CheckLiveScanRange();
@@ -18,6 +25,7 @@ internal static class Program
             Console.WriteLine("Live scan range and mode checks passed.");
             return;
         }
+        CheckGainControls();
         CheckFrequencyWheel();
         CheckDriverConfigurationResults();
         CheckDeviceOpening();
@@ -264,6 +272,62 @@ internal static class Program
             "Configuration errors must explain why the device could not be configured.");
     }
 
+    private static void CheckGainControls()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "RandySDR-gain-check-" + Guid.NewGuid());
+        Directory.CreateDirectory(directory);
+        try
+        {
+            using var form = CreateForm(directory);
+            var tuner = Field<CheckBox>(form, "chkTunerAGC");
+            var rtl = Field<CheckBox>(form, "chkRtlAGC");
+            var offset = Field<CheckBox>(form, "chkOffsetTuning");
+            var quadrature = Field<RadioButton>(form, "rdoQuadrature");
+            var directI = Field<RadioButton>(form, "rdoDirectSamplingI");
+            var directQ = Field<RadioButton>(form, "rdoDirectSamplingQ");
+            var gain = Field<TrackBar>(form, "trackTunerGain");
+            var bandwidth = Field<TrackBar>(form, "trackRxBandwidth");
+
+            Check(!tuner.Enabled && !rtl.Enabled && !offset.Enabled && !directI.Enabled,
+                "Gain controls must be disabled before the device opens.");
+            Call(form, "UpdateControlsState", true);
+            Check(tuner.Enabled && rtl.Enabled && offset.Enabled && quadrature.Enabled && directI.Enabled
+                && directQ.Enabled && gain.Enabled && bandwidth.Enabled,
+                "Gain controls must be enabled after opening the device, including their parent containers.");
+            Check(Field<Control>(form, "numFrequency").Enabled && Field<RadioButton>(form, "rdoDemodAm").Enabled,
+                "Tuning and demodulation controls must also be enabled when the device opens.");
+            Check(tuner.ForeColor.GetBrightness() > 0.6 && tuner.BackColor.GetBrightness() < 0.35,
+                "Enabled gain controls must have light text on a dark background.");
+            Mouse(tuner, "OnClick", Point.Empty);
+            Check(tuner.Checked && !gain.Enabled, "Tuner AGC must disable manual gain.");
+            Mouse(tuner, "OnClick", Point.Empty);
+            Check(!tuner.Checked && gain.Enabled, "Turning tuner AGC off must enable manual gain.");
+            Mouse(rtl, "OnClick", Point.Empty);
+            Check(rtl.Checked, "RTL AGC must respond to clicks.");
+            Mouse(directI, "OnClick", Point.Empty);
+            Check(directI.Checked && !quadrature.Checked, "Direct I must respond and select its sampling mode.");
+            Field<Button>(form, "btnStop").Enabled = true;
+            var autoThreshold = Field<CheckBox>(form, "_chkAutoThreshold");
+            var manualThreshold = Field<TrackBar>(form, "_trackThreshold");
+            var autoTrim = Field<NumericUpDown>(form, "_numAutoTrim");
+            autoThreshold.Checked = true;
+            Check(!manualThreshold.Enabled && autoTrim.Enabled,
+                "Automatic threshold must keep manual threshold disabled.");
+            autoThreshold.Checked = false;
+            Check(manualThreshold.Enabled && !autoTrim.Enabled,
+                "Manual threshold must keep automatic trim disabled.");
+            Call(form, "UpdateControlsState", false);
+            Check(!tuner.Enabled && !rtl.Enabled && !directI.Enabled, "Closing the device must disable gain controls.");
+            Call(form, "UpdateControlsState", true);
+            Check(tuner.Enabled && rtl.Enabled && directI.Enabled, "Reopening the device must restore gain controls.");
+        }
+        finally
+        {
+            foreach (string file in Directory.GetFiles(directory)) File.Delete(file);
+            Directory.Delete(directory);
+        }
+    }
+
     private static void CheckDeviceOpening()
     {
         string directory = Path.Combine(Path.GetTempPath(), "RandySDR-open-check-" + Guid.NewGuid());
@@ -310,8 +374,13 @@ internal static class Program
                 WaitFor(() => !Field<bool>(form, "_deviceOpening"), "Opening did not complete.");
                 Check(status.Text.Contains("Connected") && !list.Enabled,
                     $"Successful opening must enable the connected state (status: {status.Text}, list enabled: {list.Enabled}).");
+                Check(Field<CheckBox>(form, "chkTunerAGC").Enabled && Field<RadioButton>(form, "rdoDirectSamplingI").Enabled
+                    && Field<TrackBar>(form, "trackTunerGain").Enabled,
+                    "The completed device-open workflow must enable gain and input controls.");
                 Call(form, "btnClose_Click", form, EventArgs.Empty);
                 Check(open.Enabled && list.Enabled, "Closing must restore the disconnected controls.");
+                Check(!Field<CheckBox>(form, "chkTunerAGC").Enabled,
+                    "The device-close workflow must disable gain controls.");
             }
 
             using (var form = CreateForm(directory))
@@ -458,9 +527,20 @@ internal static class Program
             Check(scanner.State == ScanState.Scanning && scanner.ChannelHz.Count == 7,
                 "Changing scan method must keep scanning with the new plan.");
             preset.SelectedIndex = 6;
-            Check(scanner.State == ScanState.Scanning && scanner.ChannelHz.Count == 40
-                && scanner.ChannelHz[0] == 26_965_000,
+            Check(scanner.State == ScanState.Scanning && scanner.ChannelHz.Count == 225
+                && scanner.ChannelHz[0] == 26_065_000 && scanner.ChannelHz[^1] == 28_305_000,
                 "The CB preset must apply its channel plan during scanning.");
+            Call(scanner, "Lock", 149, 15d);
+            Check(scanner.LockedHz == 27_555_000 && pipeline.Demodulator.Mode == DemodulationMode.Usb
+                && Field<Label>(form, "_lblScanStatus").Text.Contains("CB 12H"),
+                "A CB 12H lock must select USB and display its label.");
+            scanner.Resume();
+            Call(scanner, "Lock", 132, 15d);
+            Check(scanner.LockedHz == 27_385_000 && pipeline.Demodulator.Mode == DemodulationMode.Lsb
+                && Field<Label>(form, "_lblScanStatus").Text.Contains("CB 38 "),
+                "A CB 38 lock must select LSB and display its label.");
+            scanner.Resume();
+            Check(scanner.State == ScanState.Scanning, "Resuming a CB lock must continue scanning.");
             Call(form, "StopScan");
             Check(scanner.State == ScanState.Idle, "Stopping must end scanning after a range change.");
         }

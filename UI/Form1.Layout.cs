@@ -101,6 +101,7 @@ namespace RandySDR
             tuner.Controls.Add(chkTunerAGC, 0, 0);
             tuner.Controls.Add(trackTunerGain, 1, 0);
             tuner.Controls.Add(lblTunerGain, 2, 0);
+            
             var input = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5 };
             for (int i = 0; i < 4; i++) input.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             input.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -110,8 +111,11 @@ namespace RandySDR
             input.Controls.Add(lblClip, 2, 0);
             input.Controls.Add(lblRxBandwidth, 3, 0);
             input.Controls.Add(trackRxBandwidth, 4, 0);
+            
             var sampling = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
             sampling.Controls.AddRange(new Control[] { rdoQuadrature, rdoDirectSamplingI, rdoDirectSamplingQ });
+            
+            // Clear and rebuild the panel
             groupBox3.Controls.Clear();
             groupBox3.Padding = new Padding(10, 4, 10, 6);
             gain.Controls.Add(tuner, 0, 0);

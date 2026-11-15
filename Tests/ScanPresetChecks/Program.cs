@@ -105,6 +105,7 @@ internal static class Program
 
             presets.SelectedIndex = 6;
             Check(settings.UseCbChannels && am.Checked, "The CB preset must retain its channel plan and AM mode.");
+            CheckCbPlan(form, presets, auto, settings);
 
             presets.SelectedIndex = Enumerable.Range(0, presets.Items.Count)
                 .Single(i => presets.Items[i]!.ToString()!.StartsWith("NOAA weather"));
@@ -315,11 +316,12 @@ internal static class Program
                 Call(form, "OnScanLocked", start * 1_000_000, 10d);
                 Check(pipeline.Demodulator.Mode == mode, $"Preset {index} start must retain {mode} on lock.");
                 Call(form, "OnScanLocked", stop * 1_000_000, 10d);
-                Check(pipeline.Demodulator.Mode == mode, $"Preset {index} endpoint must retain {mode} on lock.");
+                var endpointMode = index == 6 ? DemodulationMode.Usb : mode;
+                Check(pipeline.Demodulator.Mode == endpointMode, $"Preset {index} endpoint must use {endpointMode} on lock.");
                 Call(form, "LoadScanSettingsToUi");
                 Check(presets.SelectedIndex == index, $"Preset {index} must survive a settings reload.");
                 Call(form, "OnScanLocked", stop * 1_000_000, 10d);
-                Check(pipeline.Demodulator.Mode == mode, $"Restored preset {index} must retain {mode} on lock.");
+                Check(pipeline.Demodulator.Mode == endpointMode, $"Restored preset {index} must use {endpointMode} on lock.");
             }
 
             auto.Checked = false;
@@ -349,6 +351,90 @@ internal static class Program
             pipeline.Dispose();
         }
     }
+
+    private static void CheckCbPlan(Form1 form, ComboBox presets, CheckBox auto, ScanSettings settings)
+            {
+                string[] labels =
+                {
+                    "1", "2", "3", "3A", "4", "5", "6", "7", "7A", "8",
+                    "9", "10", "11", "11A", "12", "13", "14", "15", "15A", "16",
+                    "17", "18", "19", "19A", "20", "21", "22", "24", "25", "23",
+                    "26", "27", "28", "29", "30", "31", "32", "33", "34", "35",
+                    "36", "37", "38", "39", "40"
+                };
+                string[] suffixes = { "LL", "L", "", "H", "HH" };
+                Check(settings.StartMHz == 26.065 && settings.StopMHz == 28.305 && settings.StepKHz == 10,
+                    "CB preset must select the extended range.");
+                Check(CbChannels.Channels.Count == 225, "The extended CB plan must contain 225 channels.");
+                using var pipeline = new ReceiverPipeline(2_400_000);
+                foreach (var method in new[] { ScanMethod.WidebandFft, ScanMethod.TuneEachChannel })
+                {
+                    settings.Method = method;
+                    var scanner = new SignalScanner(settings, _ => { }, () => pipeline, () => 2_400_000);
+                    Check(scanner.Start(out string error), $"{method}: CB scan failed to start: {error}");
+                    Check(scanner.ChannelHz.Count == 225, $"{method}: incorrect CB channel count.");
+                    var hops = (System.Collections.IEnumerable)scanner.GetType().GetField("_hops", PrivateInstance)!.GetValue(scanner)!;
+                    var indices = new List<int>();
+                    foreach (var hop in hops)
+                        indices.AddRange((int[])hop.GetType().GetProperty("Channels")!.GetValue(hop)!);
+                    Check(indices.SequenceEqual(Enumerable.Range(0, 225)), $"{method}: hops must cover every CB channel exactly once.");
+                    scanner.Stop();
+                }
+
+                typeof(Form1).GetField("_pipeline", PrivateInstance)!.SetValue(form, pipeline);
+                try
+                {
+                    settings.LogDetections = true;
+                    auto.Checked = true;
+                    Field<RadioButton>(form, "rdoDemodWideFm").Checked = true;
+                    var log = Field<ListView>(form, "_lstLog");
+                    for (int i = 0; i < 225; i++)
+                    {
+                        int bank = i / 45;
+                        int slot = i % 45;
+                        int hz = 26_065_000 + i * 10_000;
+                        var expectedMode = bank switch
+                        {
+                            1 or 2 when slot >= 40 => DemodulationMode.Lsb,
+                            3 => DemodulationMode.Usb,
+                            4 when slot >= 14 => DemodulationMode.Usb,
+                            _ => DemodulationMode.Am
+                        };
+                        var channel = CbChannels.Channels[i];
+                        Check(channel.FrequencyHz == hz && channel.Label == labels[slot] + suffixes[bank] && channel.Mode == expectedMode,
+                            $"Incorrect CB channel at index {i}.");
+                        Check(CbChannels.TryGetChannel(hz, out var found) && found == channel,
+                            $"CB channel lookup failed for {hz} Hz.");
+                        Call(form, "OnScanLocked", (double)hz, 15d);
+                        Check(pipeline.Demodulator.Mode == expectedMode && log.Items[0].SubItems[4].Text == channel.Label,
+                            $"Lock on CB {channel.Label} must select {expectedMode} and log the label.");
+                    }
+                    Check(!CbChannels.TryGetChannel(26_065_001, out _) && !CbChannels.TryGetChannel(28_315_000, out _),
+                        "Off-grid and out-of-range CB frequencies must not map to a channel.");
+                    Check(CbChannels.TryGetChannel(27_555_000, out var calling) && calling.Label == "12H" && calling.Mode == DemodulationMode.Usb,
+                        "27.555 MHz must be 12H USB.");
+
+                    auto.Checked = false;
+                    Field<RadioButton>(form, "rdoDemodAm").Checked = true;
+                    Call(form, "OnScanLocked", 27_555_000d, 15d);
+                    Check(pipeline.Demodulator.Mode == DemodulationMode.Am, "CB manual mode must not be overridden on lock.");
+
+                    settings.StartMHz = 26.965;
+                    settings.StopMHz = 27.405;
+                    settings.StepKHz = 10;
+                    settings.PresetName = "CB US standard 40 channels (AM)";
+                    settings.UseCbChannels = true;
+                    Call(form, "LoadScanSettingsToUi");
+                    Check(presets.SelectedIndex == 6 && settings.StartMHz == 26.065 && settings.StopMHz == 28.305,
+                        "Saved legacy CB settings must migrate to the extended plan.");
+                    Check(!auto.Checked, "Migration must preserve the manual-mode preference.");
+                }
+                finally
+                {
+                    settings.LogDetections = false;
+                    typeof(Form1).GetField("_pipeline", PrivateInstance)!.SetValue(form, null);
+                }
+            }
 
     private static void CheckPreset(Form1 form, ComboBox presets, ScanSettings settings, RadioButton nfm,
         string name, double start, double stop, double step, int count)
